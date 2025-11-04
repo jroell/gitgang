@@ -19,9 +19,9 @@ describe("Stream parsing", () => {
     expect(parseStreamLine("plain text")).toBeNull();
   });
 
-  test("shouldDisplayLine filters init/tool_result", () => {
+  test("shouldDisplayLine filters init but shows tool_result", () => {
     expect(shouldDisplayLine({ type: "init" } as any, "")).toBe(false);
-    expect(shouldDisplayLine({ type: "tool_result" } as any, "")).toBe(false);
+    expect(shouldDisplayLine({ type: "tool_result" } as any, "")).toBe(true);
     expect(shouldDisplayLine({ type: "message" } as any, "")).toBe(true);
   });
 

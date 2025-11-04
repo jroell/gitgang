@@ -299,7 +299,7 @@ function parseStreamLine(line: string): StreamMessage | null {
 
 function shouldDisplayLine(msg: StreamMessage | null, rawLine: string): boolean {
   if (!msg) return !rawLine.includes('"type"');
-  const skipTypes = ["init", "tool_result"];
+  const skipTypes = ["init"];
   if (skipTypes.includes(msg.type)) return false;
   return true;
 }
@@ -341,6 +341,19 @@ function formatMessage(
       const desc = msg.parameters?.description || msg.input?.description || "";
       if (desc) return color(`  🔧 ${toolName}: ${desc}`);
       return color(`  🔧 ${toolName}`);
+    }
+
+    case "tool_result": {
+      // Show tool results with success/error indicator
+      const toolName = msg.tool_name || msg.name || "result";
+      if (msg.is_error || msg.error) {
+        return C.red(`  ✗ ${toolName} failed`);
+      }
+      // Only show success for significant results, suppress verbose output
+      if (msg.content && typeof msg.content === "string" && msg.content.length < 100) {
+        return C.dim(`  ✓ ${toolName}: ${msg.content.slice(0, 60)}`);
+      }
+      return C.dim(`  ✓ ${toolName}`);
     }
 
     case "exec":
@@ -410,7 +423,7 @@ function streamToLog(
 
           const formatted = formatMessage(msg, trimmed, color);
           if (formatted) {
-            process.stdout.write(`${prefix} ${formatted}\n`);
+            console.log(`${prefix} ${formatted}`);
           }
         }
       }
@@ -423,7 +436,7 @@ function streamToLog(
         if (shouldDisplayLine(msg, buffer)) {
           const formatted = formatMessage(msg, buffer, color);
           if (formatted) {
-            process.stdout.write(`${prefix} ${formatted}\n`);
+            console.log(`${prefix} ${formatted}`);
           }
         }
       }
@@ -441,7 +454,7 @@ async function runGemini(
   callbacks: StreamCallbacks = {},
 ): Promise<ProcWrap> {
   const prompt = `${systemConstraints("gemini")}\n\n${featurePrompt("gemini", base, task)}`;
-  const args = ["--prompt", prompt, "-m", MODELS.gemini, "--output-format", "stream-json"];
+  const args = ["--prompt", prompt, "-m", MODELS.gemini, "--output-format", "json"];
   if (yolo) args.push("--yolo");
   const proc = spawn(["gemini", ...args], {
     cwd: w.dir,
@@ -469,7 +482,7 @@ async function runClaude(
     "--model",
     MODELS.claude,
     "--output-format",
-    "stream-json",
+    "json",
     "--verbose",
   ];
   if (yolo) args.push("--dangerously-skip-permissions");
