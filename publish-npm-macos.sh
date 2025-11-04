@@ -54,11 +54,10 @@ PKG_DIR="$(mktemp -d -t ai-orchestrator-pkg-XXXXXX)"
 log "Workspace: $PKG_DIR"
 mkdir -p "$PKG_DIR/src" "$PKG_DIR/dist"
 
-# ---------- Write the Bun CLI (TypeScript) ----------
-# Defaults:
-#   ai-orchestrator "Do this task"  -> rounds=3, yolo=true
-# Flags:
-#   --task, --rounds, --no-yolo, --timeoutMs, --workRoot, --no-pr, --help, --version
+# ---------- Copy the Bun CLI (TypeScript) ----------
+log "Copying CLI source"
+cp "$(dirname "$0")/src/cli.ts" "$PKG_DIR/src/cli.ts"
+if false; then
 cat > "$PKG_DIR/src/cli.ts" <<'TS'
 // bun-multi-agent-orchestrator-1.3.1-v2.ts
 import { spawn, $ } from "bun";
