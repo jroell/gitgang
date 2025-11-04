@@ -10,11 +10,13 @@
 ## ✨ Features
 
 - **Multi-Agent Collaboration**: Runs three AI agents in parallel (Gemini, Claude, Codex)
+- **Real-Time Dashboard**: Live-updating progress display showing file changes, commits, and agent status
+- **Beautiful Dracula UI**: Modern terminal interface with RGB colors, rounded corners, and live spinners
 - **Git Worktree Isolation**: Each agent works in its own git worktree and branch
 - **Intelligent Review Loop**: Codex reviewer analyzes all solutions and merges the best parts
 - **Interactive Command Palette**: Monitor and control agents in real-time
 - **Autonomous Execution**: Agents work independently with full permissions (optional yolo mode)
-- **Native Binary**: Fast, compiled Bun executable (~60MB)
+- **Native Binary**: Fast, compiled Bun executable (~58MB with bundled dependencies)
 
 ## 📦 Installation
 
@@ -81,18 +83,25 @@ While agents are running, use these slash commands:
 ## 🏗️ How It Works
 
 1. **Initialization**: Creates three git worktrees from your current branch
-2. **Parallel Execution**: Launches Gemini, Claude, and Codex simultaneously
-3. **Autonomous Development**: Each agent:
+2. **Parallel Execution**: Launches Gemini, Claude, and Codex simultaneously with live spinners
+3. **Real-Time Monitoring**: Dashboard updates every 2 seconds showing:
+   - Agent status (pending, working, complete)
+   - Files changed, added, and deleted in each worktree
+   - Commit counts per agent
+   - Current activity (thinking, running commands, editing files)
+   - Reviewer status (distinct from regular agents)
+   - Elapsed session time
+4. **Autonomous Development**: Each agent:
    - Implements the feature independently
    - Writes/updates tests
    - Commits changes incrementally
    - Handles failures autonomously
-4. **Review Loop**: Codex reviewer:
+5. **Review Loop**: Codex reviewer:
    - Compares all three solutions
    - Either approves and merges best parts
    - Or provides targeted revision feedback
-5. **Integration**: Creates merge branch with best solution
-6. **PR Creation**: Optionally opens GitHub PR (requires `gh` CLI)
+6. **Integration**: Creates merge branch with best solution
+7. **PR Creation**: Optionally opens GitHub PR (requires `gh` CLI)
 
 ## 📋 Requirements
 
@@ -101,6 +110,8 @@ While agents are running, use these slash commands:
 - **Node.js** / **npm** for installation
 - **Bun** runtime (auto-installed via Homebrew if missing)
 - **AI CLI Tools**: gemini, claude, codex
+- **Terminal**: RGB color support recommended (iTerm2, Terminal.app, Hyper, etc.)
+  - Gracefully falls back to basic ANSI colors in unsupported terminals
 
 ## 🛠️ Development
 
@@ -146,61 +157,59 @@ export NPM_TOKEN='your_npm_token_here'
 - Each agent works in **isolated git worktrees** to prevent conflicts
 - The reviewer creates a **new merge branch** for the final solution
 - Worktrees are **automatically cleaned up** after completion
+- **Real-time dashboard** updates every 2 seconds with live git status monitoring
+- **Terminal colors** auto-detected; works in basic ANSI mode if RGB not supported
+- **Reviewer agent** shown separately with distinct visual styling (pink badge)
 
 ## 📝 Example Session
 
 ```bash
 $ gitgang "Add Redis caching layer to API"
 
-════════════════════════════════════════════════════════════════════════════════════
-║ 🤘 GitGang - The gang's all here to code!
-════════════════════════════════════════════════════════════════════════════════════
+╭─────────────────────────────────────────────────────────────────────────────────╮
+│ 🤘 GitGang - The gang's all here to code!                                      │
+╰─────────────────────────────────────────────────────────────────────────────────╯
+
 Repository: /Users/you/project
 Base branch: main
 Task: Add Redis caching layer to API
 Rounds: 3  Auto-merge: true
 Type /help for interactive commands while agents run.
 
-════════════════════════════════════════════════════════════════════════════════════
-║ 🚀 Starting AI Agents
-════════════════════════════════════════════════════════════════════════════════════
-[GEMINI] → agents/gemini/20251104-010930-a4f2b1
-[CLAUDE] → agents/claude/20251104-010930-c8e3d2
-[CODEX] → agents/codex/20251104-010930-f9a1e5
+╭─────────────────────────────────────────────────────────────────────────────────╮
+│ 🚀 Starting AI Agents                                                           │
+╰─────────────────────────────────────────────────────────────────────────────────╯
 
-[GEMINI]   ⚙️  Initialized (gemini-2.5-pro)
-[GEMINI]   I'll implement Redis caching with connection pooling and error handling.
-[GEMINI]   🔧 edit_file: Add Redis client configuration
-[GEMINI]   🔧 edit_file: Update API handlers with cache layer
-[GEMINI]   💭 Checking if tests need updates...
+ GEMINI  → agents/gemini/20251104-010930-a4f2b1
+ CLAUDE  → agents/claude/20251104-010930-c8e3d2
+ CODEX   → agents/codex/20251104-010930-f9a1e5
 
-[CLAUDE]   ⚙️  Initialized (claude-sonnet-4-5)
-[CLAUDE]   I'll add Redis caching with TTL management and cache invalidation.
-[CLAUDE]   🔧 Edit: src/cache/redis-client.ts
-[CLAUDE]   🔧 Bash: npm install redis --save
+╭─────────────────────────────────────────────────────────────────────────────────╮
+│ 📊 Agent Dashboard                              Round 1  ⏱️  3:24               │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│ ● GEMINI   ✓ Complete    Files: +3 ~2 -0    Commits: 4                         │
+│   Implemented Redis client with connection pooling                              │
+│                                                                                  │
+│ ● CLAUDE   ● Working     Files: +2 ~1 -0    Commits: 3                         │
+│   Adding cache layer to API endpoints...                                        │
+│                                                                                  │
+│ ○ CODEX    ○ Pending     Files: +0 ~0 -0    Commits: 0                         │
+│   Waiting to start...                                                           │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│ REVIEWER   ● Reviewing                                                          │
+│   Comparing all solutions...                                                    │
+╰─────────────────────────────────────────────────────────────────────────────────╯
 
-[CODEX]   ⚙️  Initialized (gpt-5-codex)
-[CODEX]   💭 Planning cache architecture with Redis...
-[CODEX]   🔧 edit_file: Create Redis cache abstraction
-[CODEX]   $ npm run test:unit -- cache
+╭─────────────────────────────────────────────────────────────────────────────────╮
+│ ✓ Reviewer Approved                                                             │
+╰─────────────────────────────────────────────────────────────────────────────────╯
 
-/status
-[GEMINI] running @ agents/gemini/20251104-010930-a4f2b1
-[CLAUDE] running @ agents/claude/20251104-010930-c8e3d2
-[CODEX] running @ agents/codex/20251104-010930-f9a1e5
+Merge branch ready: ai-merge-20251104-011245
+PR created: https://github.com/you/project/pull/123
 
-════════════════════════════════════════════════════════════════════════════════════
-║ Reviewer loop (Codex)
-════════════════════════════════════════════════════════════════════════════════════
-Round 1
-Merging agents/gemini/20251104-010930-a4f2b1…
-Merging agents/claude/20251104-010930-c8e3d2…
-Approved. Merge branch ready: ai-merge-20251104-011245
-PR created.
-
-════════════════════════════════════════════════════════════════════════════════════
-║ All done
-════════════════════════════════════════════════════════════════════════════════════
+╭─────────────────────────────────────────────────────────────────────────────────╮
+│ ✨ All done!                                                                    │
+╰─────────────────────────────────────────────────────────────────────────────────╯
 ```
 
 ## 🤝 Contributing
