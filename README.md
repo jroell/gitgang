@@ -153,21 +153,36 @@ export NPM_TOKEN='your_npm_token_here'
 $ gitgang "Add Redis caching layer to API"
 
 ════════════════════════════════════════════════════════════════════════════════════
-║ GitGang - The gang's all here to code! (v1.3.1)
+║ 🤘 GitGang - The gang's all here to code!
 ════════════════════════════════════════════════════════════════════════════════════
-repo: /Users/you/project
-base: main
-task: Add Redis caching layer to API
-rounds: 3  yolo: true
+Repository: /Users/you/project
+Base branch: main
+Task: Add Redis caching layer to API
+Rounds: 3  Auto-merge: true
+Type /help for interactive commands while agents run.
 
 ════════════════════════════════════════════════════════════════════════════════════
-║ Start agents
+║ 🚀 Starting AI Agents
 ════════════════════════════════════════════════════════════════════════════════════
-[GEMINI] Starting implementation...
-[CLAUDE] Starting implementation...
-[CODEX] Starting implementation...
+[GEMINI] → agents/gemini/20251104-010930-a4f2b1
+[CLAUDE] → agents/claude/20251104-010930-c8e3d2
+[CODEX] → agents/codex/20251104-010930-f9a1e5
 
-Type /help for commands. Agents continue running while you use this.
+[GEMINI]   ⚙️  Initialized (gemini-2.5-pro)
+[GEMINI]   I'll implement Redis caching with connection pooling and error handling.
+[GEMINI]   🔧 edit_file: Add Redis client configuration
+[GEMINI]   🔧 edit_file: Update API handlers with cache layer
+[GEMINI]   💭 Checking if tests need updates...
+
+[CLAUDE]   ⚙️  Initialized (claude-sonnet-4-5)
+[CLAUDE]   I'll add Redis caching with TTL management and cache invalidation.
+[CLAUDE]   🔧 Edit: src/cache/redis-client.ts
+[CLAUDE]   🔧 Bash: npm install redis --save
+
+[CODEX]   ⚙️  Initialized (gpt-5-codex)
+[CODEX]   💭 Planning cache architecture with Redis...
+[CODEX]   🔧 edit_file: Create Redis cache abstraction
+[CODEX]   $ npm run test:unit -- cache
 
 /status
 [GEMINI] running @ agents/gemini/20251104-010930-a4f2b1

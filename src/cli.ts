@@ -5,7 +5,7 @@ import { resolve, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import * as readline from "node:readline";
 
-const VERSION = "1.3.2";
+const VERSION = "1.4.0";
 const C = {
   r: "\x1b[0m",
   b: (s: string) => `\x1b[1m${s}\x1b[0m`,
@@ -60,7 +60,154 @@ function featurePrompt(agent: AgentId, base: string, task: string) { return `Tas
 function reviewerPromptJSON(base: string, branches: { gemini: string; claude: string; codex: string; }, task: string) { return `You are the final reviewer. Compare these branches against ${base}:\n- ${branches.gemini}\n- ${branches.claude}\n- ${branches.codex}\n\nTask: ${task}\n\nGoal: Pick the best parts from each and integrate into a new merge branch off ${base}. If none are satisfactory, produce concrete fix instructions per agent and keep the loop going.\n\nOutput JSON only with this schema:\n{\n  "status": "approve" | "revise",\n  "mergePlan": { "order": ["branchName", ...], "notes": "why this order", "postMergeChecks": ["command", ...] },\n  "revisions": [{ "agent": "gemini" | "claude" | "codex", "instructions": "actionable steps" }]\n}`; }
 
 interface ProcWrap { proc: ReturnType<typeof spawn>, name: AgentId, log: string,  }
-function streamToLog(prefix: string, logFile: string, color: (s: string)=>string, stream: ReadableStream<Uint8Array>) { const dec=new TextDecoder(); (async()=>{ for await (const chunk of stream) { const text=dec.decode(chunk); const tagged=text.replaceAll(/(^|\n)/g, `$1${color(prefix)} `); process.stdout.write(tagged); appendFileSync(logFile, text); } })(); }
+
+interface StreamMessage {
+  type: 'message' | 'tool_use' | 'tool_result' | 'system' | 'assistant' | 'user' | 'thinking' | 'exec';
+  role?: string;
+  content?: string;
+  delta?: boolean;
+  [key: string]: any;
+}
+
+function parseStreamLine(line: string): StreamMessage | null {
+  try {
+    if (line.startsWith('{')) {
+      return JSON.parse(line);
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function shouldDisplayLine(msg: StreamMessage | null, rawLine: string): boolean {
+  // Always show non-JSON text (like CLI init messages)
+  if (!msg) return !rawLine.includes('"type"');
+  
+  // Filter out verbose JSON metadata
+  const skipTypes = ['init', 'tool_result'];
+  if (skipTypes.includes(msg.type)) return false;
+  
+  return true;
+}
+
+function formatMessage(msg: StreamMessage | null, rawLine: string, color: (s: string) => string): string {
+  // Non-JSON lines - pass through with color
+  if (!msg) {
+    // Filter out purely informational lines
+    if (rawLine.includes('Both GOOGLE_API_KEY and GEMINI_API_KEY')) return '';
+    if (rawLine.includes('workdir:') || rawLine.includes('model:') || rawLine.includes('provider:')) return '';
+    if (rawLine.includes('session id:') || rawLine.includes('approval:')) return '';
+    return color(rawLine.trim());
+  }
+
+  // Handle different message types
+  switch (msg.type) {
+    case 'message':
+      if (msg.role === 'user' && msg.content) {
+        return C.dim(`└─ Task: ${msg.content.split('\n')[0].slice(0, 80)}...`);
+      }
+      if (msg.role === 'assistant' && msg.content) {
+        const text = msg.content.trim();
+        if (text) return color(`  ${text}`);
+      }
+      break;
+    
+    case 'thinking':
+      if (msg.content) return C.dim(`  💭 ${msg.content}`);
+      break;
+    
+    case 'tool_use':
+      const toolName = msg.tool_name || msg.name || 'unknown';
+      const desc = msg.parameters?.description || msg.input?.description || '';
+      if (desc) return color(`  🔧 ${toolName}: ${desc}`);
+      return color(`  🔧 ${toolName}`);
+    
+    case 'exec':
+      if (msg.command) return C.dim(`  $ ${msg.command}`);
+      break;
+    
+    case 'assistant':
+      // Claude-style assistant messages
+      if (msg.message?.content) {
+        for (const item of msg.message.content) {
+          if (item.type === 'text' && item.text) {
+            return color(`  ${item.text}`);
+          }
+          if (item.type === 'tool_use') {
+            const name = item.name || 'unknown';
+            const desc = item.input?.description || '';
+            if (desc) return color(`  🔧 ${name}: ${desc}`);
+            return color(`  🔧 ${name}`);
+          }
+        }
+      }
+      break;
+    
+    case 'user':
+      // Skip user message echoes
+      return '';
+    
+    case 'system':
+      // System messages - show brief info only
+      if (msg.subtype === 'init') {
+        const model = msg.model || 'unknown';
+        return C.dim(`  ⚙️  Initialized (${model})`);
+      }
+      break;
+  }
+  
+  return '';
+}
+
+function streamToLog(prefix: string, logFile: string, color: (s: string)=>string, stream: ReadableStream<Uint8Array>) {
+  const dec = new TextDecoder();
+  let buffer = '';
+  
+  (async () => {
+    try {
+      for await (const chunk of stream) {
+        const text = dec.decode(chunk, { stream: true });
+        buffer += text;
+        
+        // Process complete lines
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+        
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          
+          // Always write raw to log file
+          appendFileSync(logFile, line + '\n');
+          
+          // Parse and format for display
+          const msg = parseStreamLine(trimmed);
+          if (!shouldDisplayLine(msg, trimmed)) continue;
+          
+          const formatted = formatMessage(msg, trimmed, color);
+          if (formatted) {
+            process.stdout.write(`${prefix} ${formatted}\n`);
+          }
+        }
+      }
+      
+      // Process any remaining buffer
+      if (buffer.trim()) {
+        appendFileSync(logFile, buffer + '\n');
+        const msg = parseStreamLine(buffer.trim());
+        if (shouldDisplayLine(msg, buffer)) {
+          const formatted = formatMessage(msg, buffer, color);
+          if (formatted) {
+            process.stdout.write(`${prefix} ${formatted}\n`);
+          }
+        }
+      }
+    } catch (e) {
+      console.error(C.red(`Stream error: ${e}`));
+    }
+  })();
+}
 
 async function runGemini(w: Worktree, base: string, task: string, yolo: boolean): Promise<ProcWrap> { const prompt=`${systemConstraints("gemini")}\n\n${featurePrompt("gemini", base, task)}`; const args=["--prompt",prompt,"-m",MODELS.gemini,"--output-format","stream-json"]; if(yolo) args.push("--yolo"); const proc=spawn(["gemini",...args],{cwd:w.dir,stdout:"pipe",stderr:"pipe"});  streamToLog(TAG("gemini"), w.log, C.magenta, proc.stdout!); streamToLog(TAG("gemini"), w.log, C.magenta, proc.stderr!); return { proc, name:"gemini", log:w.log }; }
 async function runClaude(w: Worktree, base: string, task: string, yolo: boolean): Promise<ProcWrap> { const prompt=`${systemConstraints("claude")}\n\n${featurePrompt("claude", base, task)}`; const args=["-p",prompt,"--model",MODELS.claude,"--output-format","stream-json","--verbose"]; if(yolo) args.push("--dangerously-skip-permissions"); const proc=spawn(["claude",...args],{cwd:w.dir,stdout:"pipe",stderr:"pipe"});  streamToLog(TAG("claude"), w.log, C.yellow, proc.stdout!); streamToLog(TAG("claude"), w.log, C.yellow, proc.stderr!); return { proc, name:"claude", log:w.log }; }
@@ -139,7 +286,11 @@ async function main(){
   await ensureCleanTree(repo);
 
   banner("🤘 GitGang - The gang's all here to code!", C.blue);
-  console.log(`${C.gray(`repo:`)} ${repo}`); console.log(`${C.gray(`base:`)} ${base}`); console.log(`${C.gray(`task:`)} ${task}`); console.log(`${C.gray(`rounds:`)} ${rounds}  ${C.gray(`yolo:`)} ${yolo}`);
+  console.log(`${C.gray(`Repository:`)} ${C.cyan(repo)}`);
+  console.log(`${C.gray(`Base branch:`)} ${C.cyan(base)}`);
+  console.log(`${C.gray(`Task:`)} ${task}`);
+  console.log(`${C.gray(`Rounds:`)} ${rounds}  ${C.gray(`Auto-merge:`)} ${yolo}`);
+  console.log(C.dim("Type /help for interactive commands while agents run."));
 
   mkdirSync(resolve(repo, workRoot), { recursive: true });
   const wGem = await createWorktree(repo, base, "gemini", workRoot);
@@ -151,7 +302,11 @@ async function main(){
   const worktrees: Record<AgentId, Worktree> = { gemini: wGem, claude: wCla, codex: wCdx };
   const rl = startCommandPalette({ agents, worktrees, opts, onReview: async () => { await doReview(opts, worktrees); } });
 
-  banner("Start agents", C.green);
+  banner("🚀 Starting AI Agents", C.green);
+  console.log(`${TAG("gemini")} → ${C.dim(wGem.branch)}`);
+  console.log(`${TAG("claude")} → ${C.dim(wCla.branch)}`);
+  console.log(`${TAG("codex")} → ${C.dim(wCdx.branch)}`);
+  console.log("");
   agents.gemini = await runGemini(wGem, base, task, yolo);
   agents.claude = await runClaude(wCla, base, task, yolo);
   agents.codex = await runCodexCoder(wCdx, base, task, yolo);
