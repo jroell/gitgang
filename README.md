@@ -1,10 +1,10 @@
-# 🤖 AI Orchestrator
+# 🤘 GitGang
 
-> Multi-agent AI orchestration for autonomous software development
+> The gang's all here to code — Multi-agent AI orchestration for autonomous software development
 
-**AI Orchestrator** is a powerful Bun-based CLI that coordinates multiple AI agents (Gemini, Claude, and Codex) to collaboratively solve complex coding tasks. Each agent works in isolation on git worktrees, and a reviewer agent merges the best solutions.
+**GitGang** is a powerful Bun-based CLI that coordinates multiple AI agents (Gemini, Claude, and Codex) to collaboratively solve complex coding tasks. Each agent works in isolation on git worktrees, and a reviewer agent merges the best solutions.
 
-[![npm version](https://img.shields.io/npm/v/jroell88-ai-orchestrator.svg)](https://www.npmjs.com/package/jroell88-ai-orchestrator)
+[![npm version](https://img.shields.io/npm/v/gitgang.svg)](https://www.npmjs.com/package/gitgang)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## ✨ Features
@@ -19,7 +19,7 @@
 ## 📦 Installation
 
 ```bash
-npm i -g jroell88-ai-orchestrator@latest
+npm i -g gitgang@latest
 ```
 
 ### Prerequisites
@@ -37,13 +37,15 @@ All three CLIs must be available on your `PATH`.
 ### Basic Usage
 
 ```bash
-ai-orchestrator "Add user authentication with JWT tokens"
+gg "Add user authentication with JWT tokens"
+# or
+gitgang "Add user authentication with JWT tokens"
 ```
 
 ### Advanced Options
 
 ```bash
-ai-orchestrator --task "Refactor API layer" \
+gitgang --task "Refactor API layer" \
   --rounds 5 \
   --no-yolo \
   --workRoot .agents \
@@ -106,17 +108,17 @@ While agents are running, use these slash commands:
 
 ```bash
 # Clone the repo
-git clone https://github.com/jroell/ai-orchestrator.git
-cd ai-orchestrator
+git clone https://github.com/jroell/gitgang.git
+cd gitgang
 
 # Install Bun
 brew install bun
 
 # Build native binary
-bun build ./src/cli.ts --compile --outfile ./dist/ai-orchestrator
+bun build ./src/cli.ts --compile --outfile ./dist/gitgang
 
 # Run locally
-./dist/ai-orchestrator "Test task"
+./dist/gitgang "Test task"
 ```
 
 ### Publishing
@@ -148,10 +150,10 @@ export NPM_TOKEN='your_npm_token_here'
 ## 📝 Example Session
 
 ```bash
-$ ai-orchestrator "Add Redis caching layer to API"
+$ gitgang "Add Redis caching layer to API"
 
 ════════════════════════════════════════════════════════════════════════════════════
-║ AI Multi-Agent Orchestrator (Bun 1.3.1)
+║ GitGang - The gang's all here to code! (v1.3.1)
 ════════════════════════════════════════════════════════════════════════════════════
 repo: /Users/you/project
 base: main
@@ -200,9 +202,9 @@ MIT License - see [LICENSE](LICENSE) file for details
 
 ## 🔗 Links
 
-- [npm Package](https://www.npmjs.com/package/jroell88-ai-orchestrator)
-- [GitHub Repository](https://github.com/jroell/ai-orchestrator)
-- [Issue Tracker](https://github.com/jroell/ai-orchestrator/issues)
+- [npm Package](https://www.npmjs.com/package/gitgang)
+- [GitHub Repository](https://github.com/jroell/gitgang)
+- [Issue Tracker](https://github.com/jroell/gitgang/issues)
 
 ---
 

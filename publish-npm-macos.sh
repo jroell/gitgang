@@ -7,7 +7,7 @@ set -euo pipefail
 
 # ---------- Config (you can tweak) ----------
 PKG_SCOPE=""
-PKG_NAME="jroell88-ai-orchestrator"
+PKG_NAME="gitgang"
 PKG_FULL="${PKG_NAME}"
 
 # Semver with timestamp patch so repeated runs do not clash
@@ -114,7 +114,7 @@ function parseFirstJson(s:string){ const m=s.match(/\{[\s\S]*\}/); if(!m) return
 
 function startCommandPalette(state:{ agents:Record<AgentId,ProcWrap|undefined>; worktrees:Record<AgentId,Worktree>; opts:Opts; onReview:()=>Promise<void>; }){ const rl=readline.createInterface({input:process.stdin,output:process.stdout}); process.stdin.resume(); console.log(C.gray("Type /help for commands. Agents continue running while you use this.")); rl.on("line", async line=>{ const s=line.trim(); if(!s.startsWith("/")) return; const parts=s.slice(1).split(/\s+/); const cmd=(parts.shift()||"").toLowerCase(); try{ switch(cmd){ case"help": console.log(C.cyan(`/status  /agents  /logs <agent>  /nudge <agent> <msg>  /kill <agent>  /review  /help`)); break; case"status": for(const id of ["gemini","claude","codex"] as AgentId[]){ const a=state.agents[id]; console.log(`${TAG(id)} ${a?C.green("running"):C.yellow("idle")} @ ${state.worktrees[id].branch}`);} break; case"agents": console.log(Object.entries(state.worktrees).map(([k,v])=>`${k}: ${v.branch} → ${v.dir}`).join("\n")); break; case"nudge":{ const id=parts.shift() as AgentId; const msg=parts.join(" "); if(!id||!msg){console.log(C.red("Usage: /nudge <agent> <message>")); break;} const a=state.agents[id]; if(a?.stdin){ await a.stdin.write(`\nProxy: ${msg}\n`); await a.stdin.flush(); console.log(C.green(`nudged ${id}`)); } else console.log(C.yellow(`${id} has no stdin or exited`)); break;} case"logs":{ const id=parts.shift() as AgentId; if(!id){console.log(C.red("Usage: /logs <agent>")); break;} const f=state.worktrees[id].log; if(!existsSync(f)){console.log(C.yellow("no log yet")); break;} const txt=readFileSync(f,"utf8"); console.log(C.dim(txt.slice(-8000))); break;} case"kill":{ const id=parts.shift() as AgentId; const a=id?state.agents[id]:undefined; if(a){ a.proc.kill(); console.log(C.yellow(`sent SIGTERM to ${id}`)); } else console.log(C.yellow(`${id} not running`)); break;} case"review": await state.onReview(); break; default: console.log(C.yellow(`Unknown command: /${cmd}`)); } }catch(e){ console.error(C.red(`Command error: ${e}`)); } }); return rl; }
 
-function printHelp(){ console.log(`\n${C.b("AI Orchestrator ("+VERSION+")")}\n${"".padEnd(84,"-")}\n\nUsage\n  ai-orchestrator "Do this task"\n  ai-orchestrator --task "Do this task" [--rounds N] [--no-yolo] [--workRoot PATH] [--timeoutMs MS] [--no-pr]\n\nDefaults\n  rounds=3, yolo=true, workRoot=.ai-worktrees, timeoutMs=1500000 (25m)\n\nWhile running\n  /status  /agents  /logs <agent>  /nudge <agent> <msg>  /kill <agent>  /review  /help\n`); }
+function printHelp(){ console.log(`\n${C.b("🤘 GitGang ("+VERSION+")")}\n${C.gray("The gang's all here to code!")}\n${"".padEnd(84,"-")}\n\nUsage\n  gg "Do this task"\n  gitgang "Do this task"\n  gitgang --task "Do this task" [--rounds N] [--no-yolo] [--workRoot PATH] [--timeoutMs MS] [--no-pr]\n\nDefaults\n  rounds=3, yolo=true, workRoot=.ai-worktrees, timeoutMs=1500000 (25m)\n\nWhile running\n  /status  /agents  /logs <agent>  /nudge <agent> <msg>  /kill <agent>  /review  /help\n`); }
 
 function parseArgs(raw: string[]){
   let task: string | undefined; let rounds = 3; let yolo = true; let workRoot = ".ai-worktrees"; let timeoutMs = 25*60*1000; let autoPR = true;
@@ -170,7 +170,7 @@ async function main(){
   const base = await currentBranch(repo);
   await ensureCleanTree(repo);
 
-  banner("AI Multi-Agent Orchestrator (Bun 1.3.1)", C.blue);
+  banner("🤘 GitGang - The gang's all here to code!", C.blue);
   console.log(`${C.gray(`repo:`)} ${repo}`); console.log(`${C.gray(`base:`)} ${base}`); console.log(`${C.gray(`task:`)} ${task}`); console.log(`${C.gray(`rounds:`)} ${rounds}  ${C.gray(`yolo:`)} ${yolo}`);
 
   mkdirSync(resolve(repo, workRoot), { recursive: true });
@@ -213,8 +213,8 @@ ensure_bun
 # ---------- Build native binary ----------
 log "Building native binary with Bun"
 pushd "$PKG_DIR" >/dev/null
-bun build ./src/cli.ts --compile --outfile ./dist/ai-orchestrator
-chmod +x ./dist/ai-orchestrator
+bun build ./src/cli.ts --compile --outfile ./dist/gitgang
+chmod +x ./dist/gitgang
 
 # ---------- Package.json, README, LICENSE ----------
 log "Creating package.json for ${PKG_FULL}@${VERSION}"
@@ -222,27 +222,34 @@ cat > package.json <<JSON
 {
   "name": "${PKG_FULL}",
   "version": "${VERSION}",
-  "description": "AI Multi-Agent Orchestrator (Bun) for Gemini CLI, Claude Code CLI, and Codex CLI.",
-  "bin": { "ai-orchestrator": "dist/ai-orchestrator" },
+  "description": "GitGang - The gang's all here to code! Multi-agent AI orchestration with Gemini, Claude, and Codex.",
+  "bin": { 
+    "gitgang": "dist/gitgang",
+    "gg": "dist/gitgang"
+  },
   "files": ["dist/**", "README.md", "LICENSE"],
   "os": ["darwin"],
   "license": "MIT",
   "publishConfig": { "access": "public" },
-  "keywords": ["bun", "gemini", "claude", "codex", "ai", "cli", "worktree"]
+  "keywords": ["gitgang", "git", "bun", "gemini", "claude", "codex", "ai", "cli", "worktree", "multi-agent"]
 }
 JSON
 
 cat > README.md <<'MD'
-# @jroell/ai-orchestrator
+# 🤘 GitGang
+
+> The gang's all here to code!
 
 Install:
 ```bash
-npm i -g @jroell/ai-orchestrator@latest
+npm i -g gitgang@latest
 ```
 
 Usage:
 ```bash
-ai-orchestrator "Do this task"
+gg "Do this task"
+# or
+gitgang "Do this task"
 # defaults: rounds=3, yolo=true
 # options: --task, --rounds, --no-yolo, --timeoutMs, --workRoot, --no-pr
 ```
@@ -254,6 +261,8 @@ Notes:
   - codex (Codex CLI, model gpt-5-codex with high reasoning)
 - The CLI creates three git worktrees, runs agents, and uses a Codex reviewer loop.
 - Use slash commands while running: /status /agents /logs <agent> /nudge <agent> <msg> /kill <agent> /review /help.
+
+Full docs: https://github.com/jroell/gitgang
 MD
 
 cat > LICENSE <<'LIC'
