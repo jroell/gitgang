@@ -9,12 +9,14 @@ import {
   readFileSync,
   rmSync,
   writeFileSync,
+  chmodSync,
 } from "node:fs";
 import { resolve, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import * as readline from "node:readline";
 import chalk from "chalk";
 import ora from "ora";
+import { createPersistentSidebar } from "./persistent-sidebar.js";
 
 declare const Bun: {
   spawn: typeof spawn;
@@ -27,8 +29,11 @@ const DEFAULT_AGENT_IDLE_TIMEOUT_MS = Number(
   process.env.GITGANG_AGENT_IDLE_TIMEOUT ?? 7 * 60 * 1000,
 );
 const AGENT_HEARTBEAT_INTERVAL_MS = 30_000;
+const NUDGE_AFTER_MS = 3 * 60 * 1000; // Nudge after 3 minutes of inactivity
+const MAX_CONSECUTIVE_ERRORS = 3; // Consider stuck after 3 consecutive errors
 const MAX_AGENT_RESTARTS = 3;
 const INITIAL_AGENT_BACKOFF_MS = 2_500;
+const ROUND_COMPLETION_TIMEOUT_MS = 15 * 60 * 1000; // Force reviewer after 15 min even if agents still running
 const MAX_AGENT_BACKOFF_MS = 2 * 60 * 1000;
 const REVIEWER_MAX_RETRIES = 3;
 const DEFAULT_POST_MERGE_CHECKS = ["bun test"];
@@ -41,6 +46,15 @@ chalk.level = supportsColor ? (process.env.COLORTERM === "truecolor" ? 3 : 2) : 
 const textEncoder = new TextEncoder();
 
 type AgentId = "gemini" | "claude" | "codex";
+
+interface AgentStats {
+  filesChanged: number;
+  additions: number;
+  deletions: number;
+  commits: number;
+  errors: number;
+  lastFile?: string;
+}
 
 interface Opts {
   task: string;
@@ -242,6 +256,8 @@ function systemConstraints(agent: AgentId) {
     "Work in small, verifiable steps and commit early with clear messages.",
     "Add or update tests to cover the change.",
     "If something fails, debug and keep going until complete.",
+    "If a tool such as bun is unavailable, immediately fallback to 'npx bun …' so progress continues.",
+    "Prefer editing files with apply_patch or here-doc writes; the 'replace' tool can fail when paths include extra whitespace.",
     "At the end, summarize what changed and any follow ups.",
   ].join("\n");
 }
@@ -268,6 +284,7 @@ function reviewerPromptJSON(
   base: string,
   branches: { gemini: string; claude: string; codex: string },
   task: string,
+  statusSummary?: string,
 ) {
   return `You are the final reviewer. Compare these branches against ${base}:
 - ${branches.gemini}
@@ -277,6 +294,9 @@ function reviewerPromptJSON(
 Task: ${task}
 
 Goal: Pick the best parts from each and integrate into a new merge branch off ${base}. If none are satisfactory, produce concrete fix instructions per agent and keep the loop going.
+
+Status summary:
+${statusSummary || "- gemini: pending\n- claude: pending\n- codex: pending"}
 
 Output JSON only with this schema:
 {
@@ -533,8 +553,9 @@ async function runCodexReviewer(
   branches: { gemini: string; claude: string; codex: string },
   task: string,
   yolo: boolean,
+  statusSummary?: string,
 ) {
-  const prompt = reviewerPromptJSON(base, branches, task);
+  const prompt = reviewerPromptJSON(base, branches, task, statusSummary);
   const args = [
     "exec",
     prompt,
@@ -588,6 +609,32 @@ async function ensureDependencies(autoPR: boolean) {
   }
 
   return { autoPR };
+}
+
+async function ensureBunShim(repoRoot: string, workRoot: string) {
+  const check = Bun.spawn(["which", "bun"], { stdout: "pipe", stderr: "pipe" });
+  await check.exited;
+  if (check.exitCode === 0) return undefined;
+
+  const shimDir = resolve(repoRoot, workRoot, ".bin");
+  mkdirSync(shimDir, { recursive: true });
+  const shimPath = join(shimDir, "bun");
+  if (!existsSync(shimPath)) {
+    const shim = `#!/usr/bin/env bash\nset -euo pipefail\nif command -v bun >/dev/null 2>&1; then\n  exec bun "$@"\nfi\nexec npx --yes bun "$@"\n`;
+    writeFileSync(shimPath, shim);
+    try {
+      chmodSync(shimPath, 0o755);
+    } catch {
+      // Ignore chmod failures on restrictive filesystems
+    }
+  }
+  return shimDir;
+}
+
+async function prepareRuntime(opts: Opts) {
+  const depResult = await ensureDependencies(opts.autoPR);
+  const shimPath = await ensureBunShim(opts.repoRoot, opts.workRoot);
+  return { autoPR: depResult.autoPR, shimPath };
 }
 
 function parseArgs(raw: string[]) {
@@ -696,6 +743,18 @@ class AgentRunner {
   private restarts = 0;
   private backoffMs = INITIAL_AGENT_BACKOFF_MS;
   private lastActivity = Date.now();
+  private lastNudge = 0;
+  private consecutiveIdleRestarts = 0;
+  private consecutiveErrors = 0;
+  private lastErrorMessage = "";
+  private lastSuccessfulAction = Date.now();
+  private stats: AgentStats = {
+    filesChanged: 0,
+    additions: 0,
+    deletions: 0,
+    commits: 0,
+    errors: 0,
+  };
   private idleTimer: ReturnType<typeof setInterval> | null = null;
   private completionResolver: ((result: AgentRunResult) => void) | null = null;
   private completionPromise: Promise<AgentRunResult> | null = null;
@@ -744,7 +803,39 @@ class AgentRunner {
       this.lastActivity = Date.now();
       const callbacks: StreamCallbacks = {
         onActivity: () => this.touch(),
-        onMessage: (msg) => this.updateSpinnerFromMessage(msg),
+        onMessage: (msg, raw) => {
+          this.updateSpinnerFromMessage(msg);
+          
+          // Track errors vs successful tool use
+          if (raw.includes("Error executing tool")) {
+            this.consecutiveErrors++;
+            this.stats.errors++;
+            this.lastErrorMessage = raw.split(":").slice(1).join(":").trim().slice(0, 200);
+            
+            // If too many consecutive errors, consider stuck
+            if (this.consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+              this.spinner?.warn(
+                `${TAG(this.id)} ${this.consecutiveErrors} consecutive errors - may be stuck`,
+              );
+            }
+          } else if (msg?.type === "tool_use" || msg?.type === "tool_result") {
+            // Reset error count on successful tool activity
+            if (!raw.includes("Error")) {
+              this.consecutiveErrors = 0;
+              this.lastSuccessfulAction = Date.now();
+              
+              // Track file changes
+              if (msg?.type === "tool_use" && msg.name?.includes("edit")) {
+                this.stats.filesChanged++;
+              }
+            }
+          }
+          
+          // Track git commits
+          if (raw.includes("git commit") || (msg?.type === "exec" && msg.command?.includes("git commit"))) {
+            this.stats.commits++;
+          }
+        },
       };
       const wrap = await agentConfig[this.id].run(
         this.worktree,
@@ -854,11 +945,68 @@ class AgentRunner {
     this.idleTimer = setInterval(() => {
       if (!this.proc) return;
       const idleFor = Date.now() - this.lastActivity;
-      if (idleFor > this.idleTimeoutMs) {
-        this.spinner?.warn(
-          `${TAG(this.id)} idle for ${(idleFor / 1000).toFixed(0)}s – restarting`,
+      const timeSinceSuccess = Date.now() - this.lastSuccessfulAction;
+      
+      // Check if stuck in error loop
+      if (this.consecutiveErrors >= MAX_CONSECUTIVE_ERRORS && timeSinceSuccess > 2 * 60 * 1000) {
+        this.spinner?.fail(
+          `${TAG(this.id)} stuck in error loop (${this.consecutiveErrors} errors) – giving up`,
         );
+        this.stopHeartbeat();
+        this.stopRequested = true;
         this.proc.kill();
+        
+        void recordDNF(
+          this.opts,
+          "Agent stuck in error loop",
+          `Agent had ${this.consecutiveErrors} consecutive errors. Last error: ${this.lastErrorMessage}`,
+        );
+        return;
+      }
+      
+      // Nudge agent if idle for 3 minutes and haven't nudged recently
+      if (idleFor > NUDGE_AFTER_MS && (Date.now() - this.lastNudge) > NUDGE_AFTER_MS) {
+        this.lastNudge = Date.now();
+        
+        let nudgeMessage = `You seem to be stuck or idle. Please provide a status update or continue working on the task. If you're done, please provide a summary of what you've accomplished.`;
+        
+        // Add error context if agent has been hitting errors
+        if (this.consecutiveErrors > 0) {
+          nudgeMessage += `\n\nNote: You've had ${this.consecutiveErrors} recent error(s). Last error: ${this.lastErrorMessage.slice(0, 150)}`;
+          if (this.lastErrorMessage.includes("File path must be within")) {
+            nudgeMessage += `\n\nTip: Ensure all file paths are absolute and within your worktree directory.`;
+          }
+        }
+        
+        this.spinner.text = `${TAG(this.id)} 🔔 Nudging (idle ${(idleFor / 1000).toFixed(0)}s)...`;
+        void this.nudge(nudgeMessage);
+      }
+      
+      // Kill agent if idle for too long
+      if (idleFor > this.idleTimeoutMs) {
+        this.consecutiveIdleRestarts++;
+        
+        // If agent keeps getting stuck, record DNF instead of restarting
+        if (this.consecutiveIdleRestarts >= 2) {
+          this.spinner?.fail(
+            `${TAG(this.id)} stuck repeatedly (${this.consecutiveIdleRestarts} idle timeouts) – giving up`,
+          );
+          this.stopHeartbeat();
+          this.stopRequested = true; // Prevent restart
+          this.proc.kill();
+          
+          // Record DNF
+          void recordDNF(
+            this.opts,
+            "Agent stuck/unresponsive",
+            `Agent became idle after ${(idleFor / 1000).toFixed(0)}s with no activity. Occurred ${this.consecutiveIdleRestarts} times.`,
+          );
+        } else {
+          this.spinner?.warn(
+            `${TAG(this.id)} idle for ${(idleFor / 1000).toFixed(0)}s – restarting (attempt ${this.consecutiveIdleRestarts})`,
+          );
+          this.proc.kill();
+        }
       }
     }, AGENT_HEARTBEAT_INTERVAL_MS);
     this.idleTimer.unref?.();
@@ -887,6 +1035,11 @@ class AgentRunner {
 
   private touch() {
     this.lastActivity = Date.now();
+    // Reset consecutive idle restarts on activity
+    if (this.consecutiveIdleRestarts > 0) {
+      this.consecutiveIdleRestarts = 0;
+    }
+    // Note: Don't reset consecutiveErrors here - only reset on successful tool use
   }
 
   private settle(result: AgentRunResult) {
@@ -924,6 +1077,10 @@ class AgentRunner {
 
   getStatus() {
     return this.status;
+  }
+
+  getStats(): AgentStats {
+    return { ...this.stats };
   }
 
   getSummary() {
@@ -1173,6 +1330,7 @@ async function runRevisionRequests(
 async function doReview(
   opts: Opts,
   agents: Record<AgentId, AgentRunner>,
+  statusSummary: string,
 ): Promise<
   | { status: "approved"; mergeBranch: string }
   | { status: "revisions" }
@@ -1193,6 +1351,7 @@ async function doReview(
       },
       opts.task,
       opts.yolo,
+      statusSummary,
     );
 
     const [stdout, stderr] = await Promise.all([
@@ -1311,10 +1470,7 @@ async function main() {
   const base = await currentBranch(repo);
   await ensureCleanTree(repo);
 
-  const depResult = await ensureDependencies(autoPR);
-  autoPR = depResult.autoPR;
-
-  const opts: Opts = {
+  let opts: Opts = {
     task,
     repoRoot: repo,
     baseBranch: base,
@@ -1325,12 +1481,22 @@ async function main() {
     autoPR,
   };
 
+  const runtime = await prepareRuntime(opts);
+  opts = { ...opts, autoPR: runtime.autoPR };
+  if (runtime.shimPath) {
+    const currentPath = process.env.PATH || "";
+    if (!currentPath.split(":").includes(runtime.shimPath)) {
+      process.env.PATH = `${runtime.shimPath}:${currentPath}`;
+    }
+    console.log(C.yellow("bun not found – using npx bun shim for agent runs."));
+  }
+
   banner("🤘 GitGang - The gang's all here to code!", C.blue);
   console.log(`${C.gray("Repository:")} ${C.cyan(repo)}`);
   console.log(`${C.gray("Base branch:")} ${C.cyan(base)}`);
   console.log(`${C.gray("Task:")} ${task}`);
   console.log(
-    `${C.gray("Rounds:")} ${rounds}  ${C.gray("Auto-merge:")} ${yolo}  ${C.gray("Auto-PR:")} ${autoPR}`,
+    `${C.gray("Rounds:")} ${rounds}  ${C.gray("Auto-merge:")} ${yolo}  ${C.gray("Auto-PR:")} ${opts.autoPR}`,
   );
   console.log(
     C.dim("Type /help for interactive commands while agents run."),
@@ -1348,6 +1514,10 @@ async function main() {
   };
 
   const rl = startCommandPalette({ agents, opts });
+
+  // Initialize persistent sidebar dashboard
+  const sidebar = createPersistentSidebar(agents, opts, { width: 52 });
+  sidebar.start();
 
   banner("🚀 Starting AI Agents", C.green);
   console.log(`${TAG("gemini")} → ${C.dim(wGem.branch)}`);
@@ -1370,31 +1540,89 @@ async function main() {
   }, timeoutMs + GLOBAL_TIMEOUT_GRACE_MS);
   globalTimeout.unref?.();
 
-  const agentResults = await Promise.all(agentPromises);
+  // Race agent completion against round timeout to ensure we proceed to reviewer
+  const roundTimeoutPromise = new Promise<void>((resolve) => {
+    setTimeout(() => {
+      console.log(
+        C.yellow(
+          `\n${C.b("Round timeout")}: ${ROUND_COMPLETION_TIMEOUT_MS / 60000} minutes elapsed. Proceeding to reviewer with available results…`,
+        ),
+      );
+      resolve();
+    }, ROUND_COMPLETION_TIMEOUT_MS);
+  });
+
+  await Promise.race([Promise.all(agentPromises), roundTimeoutPromise]);
+  
+  // Collect results from completed agents
+  const agentResults = await Promise.allSettled(agentPromises.map(p => 
+    Promise.race([p, new Promise<never>((_, reject) => 
+      setTimeout(() => reject(new Error('timeout')), 100)
+    )])
+  )).then(results => 
+    results
+      .map((r, i) => {
+        const { id } = (Object.entries(agents) as Array<[AgentId, AgentRunner]>)[i];
+        if (r.status === 'fulfilled') {
+          return r.value;
+        } else {
+          // Agent still running or errored - check actual status
+          const runner = agents[id];
+          const status = runner.getStatus();
+          return {
+            id,
+            result: {
+              status: status === 'completed' ? 'success' : 'dnf' as const,
+              exitCode: status === 'completed' ? 0 : 1,
+              restarts: 0,
+              reason: status === 'running' ? 'Still running when round timeout occurred' : 'Failed to complete',
+            },
+          };
+        }
+      })
+  );
+  
   clearTimeout(globalTimeout);
 
   const failedAgents = agentResults.filter((r) => r.result.status !== "success");
+  const successfulAgents = agentResults.filter((r) => r.result.status === "success");
   let finalStatus: "approved" | "dnf" | "pending" = "pending";
   let dnfDetails: string | undefined;
   let dnfReason: string | undefined;
   let mergeBranch: string | undefined;
 
   if (failedAgents.length) {
+    console.log(C.yellow(`\n${C.b("Notice")}: ${failedAgents.length} agent(s) did not complete successfully`));
+    for (const entry of failedAgents) {
+      console.log(
+        C.yellow(
+          `  - ${entry.id}: ${entry.result.reason ?? "unknown failure"} (exit ${entry.result.exitCode})`,
+        ),
+      );
+    }
+  }
+
+  if (!successfulAgents.length) {
     finalStatus = "dnf";
-    const reasons = failedAgents
-      .map(
-        ({ id, result }) =>
-          `${id}: ${result.reason ?? "unknown failure"} (exit ${result.exitCode})`,
-      )
+    dnfReason = "No agent completed the task";
+    dnfDetails = failedAgents
+      .map(({ id, result }) => `${id}: ${result.reason ?? "unknown failure"}`)
       .join("; ");
-    dnfReason = "Agent(s) failed to complete initial run";
-    dnfDetails = reasons;
     await recordDNF(opts, dnfReason, dnfDetails);
   } else {
+    const statusSummary = (Object.entries(agents) as Array<[AgentId, AgentRunner]>)
+      .map(([id, runner]) => {
+        const plain = runner.getSummary().replace(/\x1b\[[0-9;]*m/g, "").trim();
+        const err = runner.getLastError();
+        return `${id}: ${plain}${err ? ` (${err})` : ""}`;
+      })
+      .join("\n- ");
+    const summaryBlock = `- ${statusSummary}`;
+
     banner("Reviewer loop (Codex)", C.magenta);
     for (let r = 1; r <= Math.max(1, rounds); r++) {
       console.log(C.cyan(`Round ${r}`));
-      const outcome = await doReview(opts, agents);
+      const outcome = await doReview(opts, agents, summaryBlock);
       if (outcome.status === "approved") {
         mergeBranch = outcome.mergeBranch;
         finalStatus = "approved";
@@ -1418,6 +1646,8 @@ async function main() {
   }
 
   rl.close();
+  sidebar.stop();
+  
   await cleanup(repo, [wGem, wCla, wCdx]);
 
   if (finalStatus === "approved") {
