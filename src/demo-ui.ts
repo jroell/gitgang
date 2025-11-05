@@ -63,7 +63,6 @@ console.log("\n");
 const sidebar = renderSidebar(mockAgents, mockOpts, {
   width: 54,
   showLogo: true,
-  showHelloWorld: true,
 });
 
 console.log(sidebar);
