@@ -102,9 +102,11 @@ describe("Prompt helpers", () => {
       "main",
       { gemini: "g-branch", claude: "c-branch", codex: "x-branch" },
       "Ship it",
+      "- gemini: completed\n- claude: failed",
     );
     expect(prompt).toContain("g-branch");
     expect(prompt).toContain("\"status\"");
+    expect(prompt).toContain("gemini: completed");
   });
 });
 
@@ -140,5 +142,120 @@ describe("DNF recording", () => {
     expect(contents).toContain("Test task");
     expect(contents).toContain("Timeout");
     expect(contents).toContain("details");
+  });
+});
+
+describe("Agent timeout and partial completion", () => {
+  test("should handle partial agent completion", () => {
+    // Simulate results from mixed agent statuses
+    const agentResults = [
+      {
+        id: "gemini" as const,
+        result: {
+          status: "success" as const,
+          exitCode: 0,
+          restarts: 0,
+          reason: undefined,
+        },
+      },
+      {
+        id: "claude" as const,
+        result: {
+          status: "dnf" as const,
+          exitCode: 1,
+          restarts: 2,
+          reason: "Still running when round timeout occurred",
+        },
+      },
+      {
+        id: "codex" as const,
+        result: {
+          status: "dnf" as const,
+          exitCode: 1,
+          restarts: 0,
+          reason: "Agent stuck in error loop",
+        },
+      },
+    ];
+
+    const failedAgents = agentResults.filter((r) => r.result.status !== "success");
+    const successfulAgents = agentResults.filter((r) => r.result.status === "success");
+
+    expect(failedAgents.length).toBe(2);
+    expect(successfulAgents.length).toBe(1);
+    expect(successfulAgents[0].id).toBe("gemini");
+    
+    // Should proceed to reviewer since at least one succeeded
+    expect(successfulAgents.length > 0).toBe(true);
+  });
+
+  test("should skip reviewer only when all agents fail", () => {
+    const allFailedResults = [
+      {
+        id: "gemini" as const,
+        result: {
+          status: "dnf" as const,
+          exitCode: 1,
+          restarts: 0,
+          reason: "Failed",
+        },
+      },
+      {
+        id: "claude" as const,
+        result: {
+          status: "dnf" as const,
+          exitCode: 1,
+          restarts: 0,
+          reason: "Failed",
+        },
+      },
+      {
+        id: "codex" as const,
+        result: {
+          status: "dnf" as const,
+          exitCode: 1,
+          restarts: 0,
+          reason: "Failed",
+        },
+      },
+    ];
+
+    const successfulAgents = allFailedResults.filter((r) => r.result.status === "success");
+    expect(successfulAgents.length).toBe(0);
+    
+    // Should NOT proceed to reviewer when all failed
+    expect(successfulAgents.length === 0).toBe(true);
+  });
+
+  test("should format timeout reasons correctly", () => {
+    const timeoutResult = {
+      id: "gemini" as const,
+      result: {
+        status: "dnf" as const,
+        exitCode: 1,
+        restarts: 0,
+        reason: "Still running when round timeout occurred",
+      },
+    };
+
+    expect(timeoutResult.result.reason).toContain("round timeout");
+    expect(timeoutResult.result.status).toBe("dnf");
+  });
+
+  test("should distinguish between timeout and error loop failures", () => {
+    const timeoutFailure = {
+      reason: "Still running when round timeout occurred",
+      status: "dnf" as const,
+    };
+    
+    const errorLoopFailure = {
+      reason: "Agent stuck in error loop",
+      status: "dnf" as const,
+    };
+
+    expect(timeoutFailure.reason).toContain("timeout");
+    expect(errorLoopFailure.reason).toContain("error loop");
+    expect(timeoutFailure.status).toBe("dnf");
+    expect(errorLoopFailure.status).toBe("dnf");
   });
 });

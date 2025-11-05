@@ -3,9 +3,16 @@
   "version": "1.4.0",
   "type": "module",
   "description": "The gang's all here to code - AI-powered collaborative development",
+  "scripts": {
+    "postinstall": "node scripts/ensure-clis.mjs"
+  },
   "dependencies": {
+    "boxen": "^8.0.1",
     "chalk": "^5.3.0",
-    "ora": "^8.0.1"
+    "cli-boxes": "^4.0.1",
+    "gradient-string": "^3.0.0",
+    "ora": "^8.0.1",
+    "terminal-link": "^5.0.0"
   },
   "devDependencies": {
     "@types/bun": "latest"

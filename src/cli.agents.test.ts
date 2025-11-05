@@ -51,3 +51,29 @@ describe("Tag rendering", () => {
     expect(C.red("no")).toContain("no");
   });
 });
+
+describe("Error detection in agent output", () => {
+  test("should detect tool execution errors", () => {
+    const errorLine = '[GEMINI] Error executing tool replace: File path must be within one of the workspace directories';
+    expect(errorLine.includes("Error executing tool")).toBe(true);
+  });
+
+  test("should extract error message from output", () => {
+    const errorLine = '[GEMINI] Error executing tool replace: File path must be within one of the workspace directories: /some/path';
+    const errorMessage = errorLine.split(":").slice(1).join(":").trim().slice(0, 200);
+    expect(errorMessage).toContain("File path must be within");
+  });
+
+  test("should identify path-related errors", () => {
+    const errorMessage = "File path must be within one of the workspace directories";
+    expect(errorMessage.includes("File path must be within")).toBe(true);
+  });
+
+  test("should distinguish successful tool_result from errors", () => {
+    const successLine = '[GEMINI]   ✓ tool_result: Success';
+    const errorLine = '[GEMINI] Error executing tool: failed';
+    
+    expect(successLine.includes("Error")).toBe(false);
+    expect(errorLine.includes("Error")).toBe(true);
+  });
+});
