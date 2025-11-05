@@ -132,6 +132,22 @@ bun build ./src/cli.ts --compile --outfile ./dist/gitgang
 ./dist/gitgang "Test task"
 ```
 
+### Sidebar Demo
+
+Render the polished sidebar without wiring the full CLI:
+
+```ts
+import { renderHelloWorldSidebar } from "./src/sidebar.ts";
+
+console.log(renderHelloWorldSidebar());
+```
+
+Or run the bundled demo script:
+
+```bash
+bun run src/demo-ui.ts
+```
+
 ### Publishing
 
 ```bash
