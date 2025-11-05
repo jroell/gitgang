@@ -1516,8 +1516,8 @@ async function main() {
   const rl = startCommandPalette({ agents, opts });
 
   // Initialize persistent sidebar dashboard
-  const sidebar = createPersistentSidebar(agents, opts, { width: 52 });
-  sidebar.start();
+  const sidebar = createPersistentSidebar({ width: 52, position: "right" });
+  sidebar.start(agents, opts);
 
   banner("🚀 Starting AI Agents", C.green);
   console.log(`${TAG("gemini")} → ${C.dim(wGem.branch)}`);

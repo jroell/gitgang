@@ -1,56 +1,9 @@
 #!/usr/bin/env bun
 /**
- * Demo script to showcase the new polished GitGang UI
+ * Demo script to showcase the polished GitGang sidebar UI
  */
 
-import { renderSidebar } from "./sidebar.js";
-
-// Mock agent data
-const mockAgents = {
-  gemini: {
-    getStatus: () => "running" as const,
-    getStats: () => ({
-      filesChanged: 3,
-      commits: 1,
-      errors: 0,
-      additions: 45,
-      deletions: 12,
-      lastFile: "src/components/Button.tsx",
-    }),
-  },
-  claude: {
-    getStatus: () => "completed" as const,
-    getStats: () => ({
-      filesChanged: 5,
-      commits: 2,
-      errors: 0,
-      additions: 89,
-      deletions: 23,
-      lastFile: "src/utils/helpers.ts",
-    }),
-  },
-  codex: {
-    getStatus: () => "failed" as const,
-    getStats: () => ({
-      filesChanged: 1,
-      commits: 0,
-      errors: 3,
-      additions: 8,
-      deletions: 2,
-      lastFile: "src/api/client.ts",
-    }),
-  },
-};
-
-const mockOpts = {
-  task: "Add comprehensive test coverage to the authentication module",
-  rounds: 3,
-  yolo: false,
-  workRoot: ".ai-worktrees",
-  timeoutMs: 1500000,
-  noPr: false,
-  verbose: false,
-};
+import { renderHelloWorldSidebar } from "./sidebar.js";
 
 console.clear();
 console.log("\n");
@@ -60,7 +13,7 @@ console.log("╚═════════════════════�
 console.log("\n");
 
 // Render the sidebar
-const sidebar = renderSidebar(mockAgents, mockOpts, {
+const sidebar = renderHelloWorldSidebar({
   width: 54,
   showLogo: true,
 });

@@ -97,6 +97,47 @@ function renderHelloWorld(width: number): string {
 }
 
 /**
+ * Render a simple hello world sidebar demo
+ */
+export function renderHelloWorldSidebar(
+  options?: {
+    width?: number;
+    showLogo?: boolean;
+  }
+): string {
+  const agents: Record<AgentId, AgentInfo> = {
+    codex: {
+      getStatus: () => "completed",
+      getStats: () => ({
+        filesChanged: 1,
+        commits: 1,
+        errors: 0,
+        additions: 5,
+        deletions: 0,
+        lastFile: "src/hello-world.ts",
+      }),
+    },
+  };
+
+  const opts: Opts = {
+    task: "Hello, World!",
+    rounds: 1,
+    yolo: false,
+    workRoot: ".",
+    timeoutMs: 60_000,
+    repoRoot: ".",
+    baseBranch: "master",
+    autoPR: false,
+  };
+
+  return renderSidebar(agents, opts, {
+    width: options?.width ?? 46,
+    showLogo: options?.showLogo ?? true,
+    showHelloWorld: true,
+  });
+}
+
+/**
  * Render the logo section
  */
 function renderLogo(width: number): string {
@@ -274,4 +315,5 @@ export function calculateSidebarHeight(
 export default {
   renderSidebar,
   calculateSidebarHeight,
+  renderHelloWorldSidebar,
 };
