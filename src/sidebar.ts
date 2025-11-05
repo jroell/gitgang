@@ -41,6 +41,7 @@ export function renderSidebar(
     width?: number;
     height?: number;
     showLogo?: boolean;
+    showHelloWorld?: boolean;
   }
 ): string {
   const width = options?.width || 50;
@@ -61,6 +62,11 @@ export function renderSidebar(
   
   // Overall stats section
   sections.push(renderOverallStats(agents, width));
+
+  // Hello world section (if enabled)
+  if (options?.showHelloWorld) {
+    sections.push(renderHelloWorld(width));
+  }
   
   // Join all sections with spacing
   const content = joinLines(sections, 1);
@@ -72,6 +78,22 @@ export function renderSidebar(
     width,
     padding: 1,
   });
+}
+
+/**
+ * Render the Hello World section
+ */
+function renderHelloWorld(width: number): string {
+  const lines: string[] = [];
+  
+  // Section header
+  lines.push(createSection("Hello World", width - 4));
+  lines.push("");
+  
+  // Hello world message
+  lines.push(theme.text("Hello, world!"));
+  
+  return lines.join("\n");
 }
 
 /**
