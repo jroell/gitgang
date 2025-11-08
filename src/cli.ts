@@ -165,6 +165,15 @@ const TAG = (name: string) => {
 
 const line = (n = 84) => "".padEnd(n, "═");
 
+const ANSI_ESCAPE_REGEX = /\x1b\[[0-9;]*m/g;
+function stripAnsi(text: string) {
+  return text.replace(ANSI_ESCAPE_REGEX, "");
+}
+
+function normalizeStreamRaw(text: string) {
+  return stripAnsi(text).trim();
+}
+
 function box(title: string, color: (s: string) => string = C.cyan, width = 84) {
   const contentWidth = width - 4;
   const titlePadded = ` ${title} `;
@@ -548,14 +557,19 @@ async function runCodexCoder(
   return { proc, log: w.log, stdinWriter };
 }
 
-async function runCodexReviewer(
+interface ReviewerSpawnConfig {
+  args: string[];
+  options: Parameters<typeof spawn>[1];
+}
+
+export function reviewerSpawnConfig(
   cwd: string,
   base: string,
   branches: { gemini: string; claude: string; codex: string },
   task: string,
   yolo: boolean,
   statusSummary?: string,
-) {
+): ReviewerSpawnConfig {
   const prompt = reviewerPromptJSON(base, branches, task, statusSummary);
   const args = [
     "exec",
@@ -566,7 +580,25 @@ async function runCodexReviewer(
     'model_reasoning_effort="high"',
   ];
   args.push(yolo ? "--yolo" : "--full-auto");
-  return spawn(["codex", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+  const options: Parameters<typeof spawn>[1] = {
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "pipe",
+  };
+  return { args, options };
+}
+
+async function runCodexReviewer(
+  cwd: string,
+  base: string,
+  branches: { gemini: string; claude: string; codex: string },
+  task: string,
+  yolo: boolean,
+  statusSummary?: string,
+) {
+  const { args, options } = reviewerSpawnConfig(cwd, base, branches, task, yolo, statusSummary);
+  return spawn(["codex", ...args], options);
 }
 
 function parseFirstJson(s: string) {
@@ -689,7 +721,67 @@ function parseArgs(raw: string[]) {
     }
   }
 
-  return { task, rounds, yolo, workRoot, timeoutMs, autoPR };
+  return normalizeParsedArgs({ task, rounds, yolo, workRoot, timeoutMs, autoPR });
+}
+
+interface ParsedArgs {
+  task?: string;
+  rounds: number;
+  yolo: boolean;
+  workRoot: string;
+  timeoutMs: number;
+  autoPR: boolean;
+}
+
+export function normalizeParsedArgs(parsed: ParsedArgs): ParsedArgs {
+  const maxRounds = 10;
+  const minTimeout = 60_000;
+  const maxTimeout = 60 * 60 * 1000; // 1 hour
+
+  let rounds = Number.isFinite(parsed.rounds) ? Math.round(parsed.rounds) : 3;
+  if (rounds < 1) {
+    console.warn(C.yellow("Rounds must be at least 1. Defaulting to 1."));
+    rounds = 1;
+  } else if (rounds > maxRounds) {
+    console.warn(C.yellow(`Rounds capped to ${maxRounds} to keep runs manageable.`));
+    rounds = maxRounds;
+  }
+
+  let timeoutMs = Number.isFinite(parsed.timeoutMs) ? parsed.timeoutMs : 25 * 60 * 1000;
+  if (timeoutMs < minTimeout) {
+    console.warn(C.yellow("timeoutMs too low. Using minimum of 60 seconds."));
+    timeoutMs = minTimeout;
+  } else if (timeoutMs > maxTimeout) {
+    console.warn(C.yellow("timeoutMs too high. Capping to 60 minutes."));
+    timeoutMs = maxTimeout;
+  }
+
+  const workRoot = parsed.workRoot?.trim() ? parsed.workRoot.trim() : ".ai-worktrees";
+
+  return {
+    task: parsed.task,
+    rounds,
+    yolo: parsed.yolo,
+    workRoot,
+    timeoutMs,
+    autoPR: parsed.autoPR,
+  };
+}
+
+const ORCHESTRATOR_LOG = "orchestrator.log";
+function appendOrchestratorLog(repoRoot: string, entry: string) {
+  const path = join(repoRoot, ORCHESTRATOR_LOG);
+  try {
+    appendFileSync(path, `[${new Date().toISOString()}] ${entry}
+`);
+  } catch {
+    // Silently ignore logging failures to avoid interfering with the run
+  }
+}
+
+function logStructuredError(opts: Opts, context: string, details?: string) {
+  const entry = `${context}: ${details ?? "no additional details"}`;
+  appendOrchestratorLog(opts.repoRoot, entry);
 }
 
 async function recordDNF(opts: Opts, reason: string, details?: string) {
@@ -709,6 +801,7 @@ async function recordDNF(opts: Opts, reason: string, details?: string) {
   }
   writeFileSync(path, lines.join("\n"));
   console.log(C.red(`DNF recorded at ${path}`));
+  logStructuredError(opts, "DNF recorded", `${reason}${details ? ` | ${details.trim().replace(/\n/g, " ")}` : ""}`);
   return path;
 }
 
@@ -806,34 +899,31 @@ class AgentRunner {
         onActivity: () => this.touch(),
         onMessage: (msg, raw) => {
           this.updateSpinnerFromMessage(msg);
-          
+          const sanitized = normalizeStreamRaw(raw);
+
           // Track errors vs successful tool use
-          if (raw.includes("Error executing tool")) {
+          if (sanitized.includes("Error executing tool")) {
             this.consecutiveErrors++;
             this.stats.errors++;
-            this.lastErrorMessage = raw.split(":").slice(1).join(":").trim().slice(0, 200);
-            
-            // If too many consecutive errors, consider stuck
+            this.lastErrorMessage = sanitized.split(":").slice(1).join(":").trim().slice(0, 200);
+
             if (this.consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
               this.spinner?.warn(
                 `${TAG(this.id)} ${this.consecutiveErrors} consecutive errors - may be stuck`,
               );
             }
           } else if (msg?.type === "tool_use" || msg?.type === "tool_result") {
-            // Reset error count on successful tool activity
-            if (!raw.includes("Error")) {
+            if (!sanitized.includes("Error")) {
               this.consecutiveErrors = 0;
               this.lastSuccessfulAction = Date.now();
-              
-              // Track file changes
+
               if (msg?.type === "tool_use" && msg.name?.includes("edit")) {
                 this.stats.filesChanged++;
               }
             }
           }
-          
-          // Track git commits
-          if (raw.includes("git commit") || (msg?.type === "exec" && msg.command?.includes("git commit"))) {
+
+          if (sanitized.includes("git commit") || (msg?.type === "exec" && msg.command?.includes("git commit"))) {
             this.stats.commits++;
           }
         },
@@ -933,6 +1023,7 @@ class AgentRunner {
 
     this.status = "failed";
     this.spinner?.fail(`${TAG(this.id)} failed: ${reason}`);
+    logStructuredError(this.opts, `Agent ${this.id} failure`, `${reason} (exit ${exitCode})`);
     this.settle({
       status: "dnf",
       exitCode,
@@ -1233,6 +1324,25 @@ async function runPostMergeCheck(cmd: string, repo: string) {
   return exitCode;
 }
 
+const POST_MERGE_CHECK_ATTEMPTS = 3;
+const POST_MERGE_CHECK_BACKOFF_MS = 500;
+
+export async function runPostMergeCheckWithRetries(cmd: string, repo: string) {
+  let lastExit = 1;
+  for (let attempt = 1; attempt <= POST_MERGE_CHECK_ATTEMPTS; attempt++) {
+    lastExit = await runPostMergeCheck(cmd, repo);
+    if (lastExit === 0) {
+      return 0;
+    }
+    if (attempt < POST_MERGE_CHECK_ATTEMPTS) {
+      const waitTime = attempt * POST_MERGE_CHECK_BACKOFF_MS;
+      console.log(C.gray(`Retrying post-merge check (${attempt + 1}/${POST_MERGE_CHECK_ATTEMPTS}) in ${waitTime}ms…`));
+      await new Promise((resolve) => setTimeout(resolve, waitTime));
+    }
+  }
+  return lastExit;
+}
+
 async function applyMergePlan(
   opts: Opts,
   worktrees: Record<AgentId, Worktree>,
@@ -1283,7 +1393,7 @@ async function applyMergePlan(
       : DEFAULT_POST_MERGE_CHECKS;
 
   for (const check of checks) {
-    const exitCode = await runPostMergeCheck(check, opts.repoRoot);
+    const exitCode = await runPostMergeCheckWithRetries(check, opts.repoRoot);
     if (exitCode !== 0) {
       await git(opts.repoRoot, "checkout", opts.baseBranch).catch(() => {});
       return {
@@ -1326,6 +1436,22 @@ async function runRevisionRequests(
     }
   }
   return { ok: true };
+}
+
+export interface AgentStatusSource {
+  getSummary: () => string;
+  getLastError: () => string | undefined;
+}
+
+export function buildStatusSummary(agents: Record<AgentId, AgentStatusSource>) {
+  return (Object.entries(agents) as Array<[AgentId, AgentStatusSource]>)
+    .map(([id, runner]) => {
+      const plain = stripAnsi(runner.getSummary()).trim();
+      const err = runner.getLastError();
+      return `${id}: ${plain}${err ? ` (${err})` : ""}`;
+    })
+    .join(`
+- `);
 }
 
 async function doReview(
@@ -1644,18 +1770,11 @@ async function main() {
       .join("; ");
     await recordDNF(opts, dnfReason, dnfDetails);
   } else {
-    const statusSummary = (Object.entries(agents) as Array<[AgentId, AgentRunner]>)
-      .map(([id, runner]) => {
-        const plain = runner.getSummary().replace(/\x1b\[[0-9;]*m/g, "").trim();
-        const err = runner.getLastError();
-        return `${id}: ${plain}${err ? ` (${err})` : ""}`;
-      })
-      .join("\n- ");
-    const summaryBlock = `- ${statusSummary}`;
-
     banner("Reviewer loop (Codex)", C.magenta);
     for (let r = 1; r <= Math.max(1, rounds); r++) {
       console.log(C.cyan(`Round ${r}`));
+      const statusSummary = buildStatusSummary(agents);
+      const summaryBlock = `- ${statusSummary}`;
       const outcome = await doReview(opts, agents, summaryBlock);
       if (outcome.status === "approved") {
         mergeBranch = outcome.mergeBranch;

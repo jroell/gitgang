@@ -4,7 +4,12 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { applyMergePlan, type Opts, type ReviewerDecision } from "./cli";
+import {
+  applyMergePlan,
+  reviewerSpawnConfig,
+  type Opts,
+  type ReviewerDecision,
+} from "./cli";
 
 type GitArgs = [string, ...string[]];
 
@@ -117,5 +122,25 @@ describe("applyMergePlan integration", () => {
 
     expect(result.ok).toBe(false);
     expect(result.reason).toContain("Merge conflict");
+  });
+});
+
+describe("reviewer spawn config", () => {
+  const branches = {
+    gemini: "agents/gemini/demo",
+    claude: "agents/claude/demo",
+    codex: "agents/codex/demo",
+  };
+
+  test("requests its own stdin pipe for the reviewer", () => {
+    const config = reviewerSpawnConfig("/tmp/repo", "main", branches, "Test task", true);
+    expect(config.options.stdin).toBe("pipe");
+    expect(config.options.cwd).toBe("/tmp/repo");
+    expect(config.args).toContain("--yolo");
+  });
+
+  test("falls back to full-auto when not yolo", () => {
+    const config = reviewerSpawnConfig("/tmp/repo", "main", branches, "Test task", false);
+    expect(config.args).toContain("--full-auto");
   });
 });
