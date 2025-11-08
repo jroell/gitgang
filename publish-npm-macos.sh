@@ -9,6 +9,7 @@ set -euo pipefail
 PKG_SCOPE=""
 PKG_NAME="gitgang"
 PKG_FULL="${PKG_NAME}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Semver with timestamp patch so repeated runs do not clash
 VERSION="0.1.$(date +%Y%m%d%H%M)"
@@ -52,20 +53,17 @@ ensure_bun() {
 # ---------- Make a temp package workspace ----------
 PKG_DIR="$(mktemp -d -t ai-orchestrator-pkg-XXXXXX)"
 log "Workspace: $PKG_DIR"
-mkdir -p "$PKG_DIR/src" "$PKG_DIR/dist"
-
-# ---------- Copy the Bun CLI (TypeScript) ----------
-log "Copying CLI source"
-cp "$(dirname "$0")/src/cli.ts" "$PKG_DIR/src/cli.ts"
+mkdir -p "$PKG_DIR/dist"
 
 # ---------- Ensure Bun ----------
 ensure_bun
 
 # ---------- Build native binary ----------
 log "Building native binary with Bun"
+bun build "$SCRIPT_DIR/src/cli.ts" --compile --outfile "$PKG_DIR/dist/gitgang"
+chmod +x "$PKG_DIR/dist/gitgang"
+
 pushd "$PKG_DIR" >/dev/null
-bun build ./src/cli.ts --compile --outfile ./dist/gitgang
-chmod +x ./dist/gitgang
 
 # ---------- Package.json, README, LICENSE ----------
 log "Creating package.json for ${PKG_FULL}@${VERSION}"
@@ -140,6 +138,9 @@ LIC
 
 log "Setting up npm auth (local to package dir)"
 echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
+
+# Keep npm cache local to the temp workspace to avoid ~/.npm permission issues.
+export NPM_CONFIG_CACHE="$PKG_DIR/.npm-cache"
 
 log "Publishing ${PKG_FULL}@${VERSION} to npm (public)"
 npm publish --access public

@@ -36,6 +36,7 @@ const INITIAL_AGENT_BACKOFF_MS = 2_500;
 const ROUND_COMPLETION_TIMEOUT_MS = 15 * 60 * 1000; // Force reviewer after 15 min even if agents still running
 const MAX_AGENT_BACKOFF_MS = 2 * 60 * 1000;
 const REVIEWER_MAX_RETRIES = 3;
+const REVIEWER_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes timeout for reviewer process
 const DEFAULT_POST_MERGE_CHECKS = ["bun test"];
 const GLOBAL_TIMEOUT_GRACE_MS = 15_000;
 
@@ -1341,6 +1342,8 @@ async function doReview(
   let lastError: string | undefined;
 
   for (let attempt = 1; attempt <= REVIEWER_MAX_RETRIES; attempt++) {
+    console.log(C.gray(`Starting reviewer attempt ${attempt}/${REVIEWER_MAX_RETRIES}...`));
+
     const proc = await runCodexReviewer(
       opts.repoRoot,
       opts.baseBranch,
@@ -1354,24 +1357,55 @@ async function doReview(
       statusSummary,
     );
 
-    const [stdout, stderr] = await Promise.all([
-      new Response(proc.stdout!).text(),
-      new Response(proc.stderr!).text(),
-    ]);
+    console.log(C.gray(`Reviewer process started, waiting for response (timeout: ${REVIEWER_TIMEOUT_MS / 1000}s)...`));
+
+    // Add timeout to prevent hanging forever
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error("Reviewer timeout")), REVIEWER_TIMEOUT_MS);
+    });
+
+    let stdout: string;
+    let stderr: string;
+    let exitCode: number;
+
+    try {
+      // Read streams and wait for exit in parallel with timeout
+      [stdout, stderr, exitCode] = await Promise.race([
+        Promise.all([
+          new Response(proc.stdout!).text(),
+          new Response(proc.stderr!).text(),
+          proc.exited,
+        ]),
+        timeoutPromise,
+      ]);
+    } catch (err) {
+      // Timeout or other error - kill the process
+      proc.kill();
+      lastError = `Reviewer timeout or error: ${err instanceof Error ? err.message : String(err)}`;
+      console.log(C.red(`Reviewer attempt ${attempt} failed: ${lastError}`));
+      continue;
+    }
+
+    console.log(C.gray(`Reviewer process completed with exit code ${exitCode}`));
+
     if (stderr.trim()) process.stderr.write(C.gray(stderr));
     if (stdout.trim()) process.stdout.write(C.dim(stdout));
 
-    const exitCode = await proc.exited;
     if (exitCode !== 0) {
       lastError = `Reviewer exited with code ${exitCode}`;
+      console.log(C.red(`Reviewer attempt ${attempt} failed: ${lastError}`));
       continue;
     }
 
     const decision = parseFirstJson(stdout) as ReviewerDecision | undefined;
     if (!decision) {
       lastError = "Reviewer did not emit valid JSON";
+      console.log(C.red(`Reviewer attempt ${attempt} failed: ${lastError}`));
+      console.log(C.gray(`Stdout was: ${stdout.substring(0, 200)}...`));
       continue;
     }
+
+    console.log(C.gray(`Reviewer decision: ${decision.status}`));
 
     if (decision.status === "approve") {
       const mergeResult = await applyMergePlan(opts, {
