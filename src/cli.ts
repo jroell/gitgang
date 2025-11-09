@@ -34,6 +34,7 @@ const MAX_CONSECUTIVE_ERRORS = 3; // Consider stuck after 3 consecutive errors
 const MAX_AGENT_RESTARTS = 3;
 const INITIAL_AGENT_BACKOFF_MS = 2_500;
 const ROUND_COMPLETION_TIMEOUT_MS = 15 * 60 * 1000; // Force reviewer after 15 min even if agents still running
+const POST_TIMEOUT_GRACE_MS = 3 * 1000; // Allow short grace after round timeout for just-landing results
 const MAX_AGENT_BACKOFF_MS = 2 * 60 * 1000;
 const REVIEWER_MAX_RETRIES = 3;
 const REVIEWER_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes timeout for reviewer process
@@ -1685,11 +1686,13 @@ async function main() {
   console.log(`${TAG("codex")} → ${C.dim(wCdx.branch)}`);
   console.log("");
 
-  const agentPromises = (Object.entries(agents) as Array<[AgentId, AgentRunner]>).map(
-    async ([id, runner]) => {
-      const result = await runner.run(task);
+  const agentEntries = Object.entries(agents) as Array<[AgentId, AgentRunner]>;
+  const completionMap = new Map<AgentId, AgentRunResult>();
+  const agentPromises = agentEntries.map(([id, runner]) =>
+    runner.run(task).then((result) => {
+      completionMap.set(id, result);
       return { id, result };
-    },
+    }),
   );
 
   const globalTimeout = setTimeout(() => {
@@ -1701,46 +1704,47 @@ async function main() {
   globalTimeout.unref?.();
 
   // Race agent completion against round timeout to ensure we proceed to reviewer
-  const roundTimeoutPromise = new Promise<void>((resolve) => {
-    setTimeout(() => {
+  let roundTimeoutId: ReturnType<typeof setTimeout> | undefined;
+  const roundTimeoutPromise = new Promise<"timeout">((resolve) => {
+    roundTimeoutId = setTimeout(() => {
       console.log(
         C.yellow(
           `\n${C.b("Round timeout")}: ${ROUND_COMPLETION_TIMEOUT_MS / 60000} minutes elapsed. Proceeding to reviewer with available results…`,
         ),
       );
-      resolve();
+      resolve("timeout");
     }, ROUND_COMPLETION_TIMEOUT_MS);
   });
 
-  await Promise.race([Promise.all(agentPromises), roundTimeoutPromise]);
-  
-  // Collect results from completed agents
-  const agentResults = await Promise.allSettled(agentPromises.map(p => 
-    Promise.race([p, new Promise<never>((_, reject) => 
-      setTimeout(() => reject(new Error('timeout')), 100)
-    )])
-  )).then(results => 
-    results
-      .map((r, i) => {
-        const { id } = (Object.entries(agents) as Array<[AgentId, AgentRunner]>)[i];
-        if (r.status === 'fulfilled') {
-          return r.value;
-        } else {
-          // Agent still running or errored - check actual status
-          const runner = agents[id];
-          const status = runner.getStatus();
-          return {
-            id,
-            result: {
-              status: status === 'completed' ? 'success' : 'dnf' as const,
-              exitCode: status === 'completed' ? 0 : 1,
-              restarts: 0,
-              reason: status === 'running' ? 'Still running when round timeout occurred' : 'Failed to complete',
-            },
-          };
-        }
-      })
-  );
+  const raceResult = await Promise.race([Promise.all(agentPromises), roundTimeoutPromise]);
+  const roundTimedOut = raceResult === "timeout";
+  if (roundTimeoutId) clearTimeout(roundTimeoutId);
+
+  if (roundTimedOut) {
+    await new Promise((resolve) => setTimeout(resolve, POST_TIMEOUT_GRACE_MS));
+  }
+
+  const agentResults = agentEntries.map(([id, runner]) => {
+    const cached = completionMap.get(id);
+    if (cached) {
+      return { id, result: cached };
+    }
+
+    const status = runner.getStatus();
+    const reason =
+      status === "running"
+        ? "Still running when round timeout occurred"
+        : "Failed to complete";
+    return {
+      id,
+      result: {
+        status: status === "completed" ? "success" : "dnf",
+        exitCode: status === "completed" ? 0 : 1,
+        restarts: 0,
+        reason,
+      },
+    };
+  });
   
   clearTimeout(globalTimeout);
 

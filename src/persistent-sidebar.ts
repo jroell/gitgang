@@ -143,10 +143,14 @@ export class PersistentSidebar {
     this.lastHeight = lines.length;
     
     // Calculate starting column based on position
-    const startCol = this.position === "right" 
-      ? this.terminalWidth - this.width - 2
-      : 1;
-    
+    const effectiveWidth = Math.max(
+      1,
+      Math.min(this.width, this.terminalWidth - 2),
+    );
+    const rawCol =
+      this.position === "right" ? this.terminalWidth - effectiveWidth - 1 : 1;
+    const startCol = Math.min(Math.max(1, rawCol), this.terminalWidth);
+
     // Render each line at fixed position
     for (let i = 0; i < lines.length; i++) {
       const row = i + 1;
@@ -155,9 +159,10 @@ export class PersistentSidebar {
       if (row > this.terminalHeight - 1) break;
       
       // Move to position and render line
+      const lineText = lines[i].slice(0, effectiveWidth);
       process.stdout.write(ANSI.moveTo(row, startCol));
-      process.stdout.write(ANSI.clearLine);
-      process.stdout.write(lines[i]);
+      process.stdout.write(ANSI.clearToEnd);
+      process.stdout.write(lineText);
     }
     
     // Restore cursor position
