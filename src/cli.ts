@@ -23,7 +23,7 @@ declare const Bun: {
   argv: string[];
 };
 
-const VERSION = "1.4.0";
+const VERSION = "1.4.3";
 const REQUIRED_BINARIES = ["git", "gemini", "claude", "codex"] as const;
 const DEFAULT_AGENT_IDLE_TIMEOUT_MS = Number(
   process.env.GITGANG_AGENT_IDLE_TIMEOUT ?? 7 * 60 * 1000,

@@ -11,8 +11,15 @@ PKG_NAME="gitgang"
 PKG_FULL="${PKG_NAME}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Semver with timestamp patch so repeated runs do not clash
-VERSION="0.1.$(date +%Y%m%d%H%M)"
+# Auto-bump patch version
+CURRENT_VERSION=$(node -p "require('./package.json').version")
+VERSION=$(node -e "const v = '${CURRENT_VERSION}'.split('.'); v[2] = parseInt(v[2]) + 1; console.log(v.join('.'));")
+
+# Update package.json with new version
+node -e "const fs=require('fs'); const pkg=JSON.parse(fs.readFileSync('package.json')); pkg.version='${VERSION}'; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');"
+
+# Update VERSION constant in src/cli.ts
+sed -i '' "s/const VERSION = \".*\";/const VERSION = \"${VERSION}\";/" "$SCRIPT_DIR/src/cli.ts"
 
 # Darwin only per your request
 if [[ "$(uname -s)" != "Darwin" ]]; then
