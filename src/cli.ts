@@ -16,7 +16,7 @@ import { randomUUID } from "node:crypto";
 import * as readline from "node:readline";
 import chalk from "chalk";
 import ora from "ora";
-import { createPersistentSidebar } from "./persistent-sidebar.js";
+import { renderSidebar } from "./sidebar.js";
 
 declare const Bun: {
   spawn: typeof spawn;
@@ -48,6 +48,7 @@ chalk.level = supportsColor ? (process.env.COLORTERM === "truecolor" ? 3 : 2) : 
 const textEncoder = new TextEncoder();
 
 type AgentId = "gemini" | "claude" | "codex";
+const AGENT_IDS: AgentId[] = ["gemini", "claude", "codex"];
 
 interface AgentStats {
   filesChanged: number;
@@ -1199,20 +1200,30 @@ class AgentRunner {
   }
 }
 
-function startCommandPalette(state: {
+interface CommandPaletteState {
   agents: Record<AgentId, AgentRunner>;
   opts: Opts;
-}) {
+  refreshDashboard?: (reason?: string, options?: { force?: boolean }) => void;
+}
+
+function startCommandPalette(state: CommandPaletteState) {
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
   });
   process.stdin.resume();
   console.log(
-    C.gray("Type /help for commands. Agents continue running while you use this."),
+    C.gray(
+      "Type /help or @codex/@claude/@gemini/@all <message>. Agents keep running while you interact.",
+    ),
   );
   rl.on("line", async (line) => {
     const s = line.trim();
+    if (!s) return;
+    if (s.startsWith("@")) {
+      await handleAgentMentionInput(s, state);
+      return;
+    }
     if (!s.startsWith("/")) return;
     const parts = s.slice(1).split(/\s+/);
     const cmd = (parts.shift() || "").toLowerCase();
@@ -1226,10 +1237,11 @@ function startCommandPalette(state: {
           );
           break;
         case "status":
-          for (const id of ["gemini", "claude", "codex"] as AgentId[]) {
+          for (const id of AGENT_IDS) {
             const runner = state.agents[id];
             console.log(`${TAG(id)} ${runner.getSummary()}`);
           }
+          state.refreshDashboard?.("Manual /status request", { force: true });
           break;
         case "agents":
           console.log(
@@ -1306,6 +1318,112 @@ function startCommandPalette(state: {
     }
   });
   return rl;
+}
+
+function isAgentId(value: string): value is AgentId {
+  return AGENT_IDS.includes(value as AgentId);
+}
+
+async function handleAgentMentionInput(input: string, state: CommandPaletteState) {
+  const trimmed = input.slice(1).trim();
+  if (!trimmed) {
+    console.log(C.red("Usage: @all <message> or @codex <message>"));
+    return true;
+  }
+
+  const segments = trimmed.split(/\s+/);
+  const rawTarget = segments.shift() || "";
+  const sanitizedTarget = rawTarget.replace(/[^a-zA-Z]/g, "").toLowerCase();
+  const message = segments.join(" ").trim();
+
+  if (!sanitizedTarget) {
+    console.log(C.red("Missing agent name after @"));
+    return true;
+  }
+  if (!message) {
+    console.log(C.red("Please include a message after the mention."));
+    return true;
+  }
+
+  if (sanitizedTarget === "all") {
+    const entries = Object.entries(state.agents) as Array<[AgentId, AgentRunner]>;
+    if (!entries.length) {
+      console.log(C.yellow("No agents available for broadcast."));
+      return true;
+    }
+    let delivered = 0;
+    const skipped: AgentId[] = [];
+    for (const [id, runner] of entries) {
+      // Provide extra context so agents know the message is user-originated.
+      const ok = await runner.nudge(`User broadcast:\n${message}`);
+      if (ok) delivered++;
+      else skipped.push(id);
+    }
+    if (delivered) {
+      console.log(C.green(`Broadcast sent to ${delivered} agent(s): "${message}"`));
+    } else {
+      console.log(C.yellow("No running agents accepted the broadcast."));
+    }
+    if (skipped.length) {
+      console.log(C.gray(`Skipped (no stdin): ${skipped.join(", ")}`));
+    }
+    state.refreshDashboard?.("User broadcast", { force: true });
+    return true;
+  }
+
+  if (!isAgentId(sanitizedTarget)) {
+    console.log(C.red(`Unknown agent mention @${rawTarget}`));
+    return true;
+  }
+
+  const runner = state.agents[sanitizedTarget];
+  if (!runner) {
+    console.log(C.red(`Agent ${sanitizedTarget} is not configured.`));
+    return true;
+  }
+
+  const ok = await runner.nudge(`User direct message:\n${message}`);
+  if (ok) {
+    console.log(C.green(`Sent message to ${sanitizedTarget}: "${message}"`));
+    state.refreshDashboard?.(`User message → ${sanitizedTarget}`, { force: true });
+  } else {
+    console.log(C.yellow(`${sanitizedTarget} is not currently accepting input.`));
+  }
+  return true;
+}
+
+function startDashboardTicker(params: {
+  agents: Record<AgentId, AgentRunner>;
+  opts: Opts;
+  intervalMs?: number;
+}) {
+  const intervalMs = params.intervalMs ?? 15_000;
+  let lastRender = "";
+
+  const render = (reason?: string, force = false) => {
+    const snapshot = renderSidebar(params.agents, params.opts, {
+      width: 52,
+      showLogo: true,
+    });
+    if (!force && snapshot === lastRender) {
+      return;
+    }
+    const label = reason ? `Agent dashboard — ${reason}` : "Agent dashboard update";
+    console.log(C.gray(`\n${label}`));
+    console.log(`${snapshot}\n`);
+    lastRender = snapshot;
+  };
+
+  render("initial", true);
+  const handle = setInterval(() => render(undefined, false), intervalMs);
+  handle.unref?.();
+
+  return {
+    refresh: (reason?: string, options?: { force?: boolean }) => {
+      render(reason, options?.force ?? false);
+    },
+    stop: () => clearInterval(handle),
+  };
 }
 
 async function runPostMergeCheck(cmd: string, repo: string) {
@@ -1606,6 +1724,7 @@ Defaults
 
 While running
   /status  /agents  /logs <agent>  /nudge <agent> <msg>  /kill <agent>  /help
+  @all <message>  @codex|@claude|@gemini <message>
 `,
   );
 }
@@ -1660,7 +1779,7 @@ async function main() {
     `${C.gray("Rounds:")} ${rounds}  ${C.gray("Auto-merge:")} ${yolo}  ${C.gray("Auto-PR:")} ${opts.autoPR}`,
   );
   console.log(
-    C.dim("Type /help for interactive commands while agents run."),
+    C.dim("Type /help or @agent/@all <msg> for interactive controls while agents run."),
   );
 
   mkdirSync(resolve(repo, workRoot), { recursive: true });
@@ -1674,11 +1793,12 @@ async function main() {
     codex: new AgentRunner("codex", wCdx, base, opts),
   };
 
-  const rl = startCommandPalette({ agents, opts });
-
-  // Initialize persistent sidebar dashboard
-  const sidebar = createPersistentSidebar({ width: 52, position: "right" });
-  sidebar.start(agents, opts);
+  const dashboard = startDashboardTicker({ agents, opts });
+  const rl = startCommandPalette({
+    agents,
+    opts,
+    refreshDashboard: dashboard.refresh,
+  });
 
   banner("🚀 Starting AI Agents", C.green);
   console.log(`${TAG("gemini")} → ${C.dim(wGem.branch)}`);
@@ -1803,7 +1923,7 @@ async function main() {
   }
 
   rl.close();
-  sidebar.stop();
+  dashboard.stop();
   
   await cleanup(repo, [wGem, wCla, wCdx]);
 
