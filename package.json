@@ -1,6 +1,6 @@
 {
   "name": "gitgang",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "type": "module",
   "description": "The gang's all here to code - AI-powered collaborative development",
   "scripts": {
