@@ -1,8 +1,12 @@
 {
   "name": "gitgang",
-  "version": "1.4.5",
+  "version": "1.4.6",
   "type": "module",
   "description": "The gang's all here to code - AI-powered collaborative development",
+  "bin": {
+    "gitgang": "./gitgang",
+    "gg": "./gitgang"
+  },
   "scripts": {
     "postinstall": "node scripts/ensure-clis.mjs"
   },
