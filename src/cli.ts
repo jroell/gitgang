@@ -319,14 +319,10 @@ Output JSON only with this schema:
 }
 
 function parseStreamLine(line: string): StreamMessage | null {
-  try {
-    if (line.startsWith("{")) {
-      return JSON.parse(line);
-    }
-  } catch {
-    return null;
-  }
-  return null;
+  // Be tolerant of prefixes like "data: { ... }" or other text before the JSON
+  const firstJson = parseFirstJson(line);
+  if (!firstJson || typeof firstJson !== "object") return null;
+  return firstJson as StreamMessage;
 }
 
 function shouldDisplayLine(msg: StreamMessage | null, rawLine: string): boolean {
@@ -486,8 +482,10 @@ async function runGemini(
   callbacks: StreamCallbacks = {},
 ): Promise<ProcWrap> {
   const prompt = `${systemConstraints("gemini")}\n\n${featurePrompt("gemini", base, task)}`;
-  const args = ["--prompt", prompt, "-m", MODELS.gemini, "--output-format", "json"];
+  // Use positional prompt argument (--prompt is deprecated)
+  const args = ["-m", MODELS.gemini, "--output-format", "json"];
   if (yolo) args.push("--yolo");
+  args.push(prompt); // Prompt must be positional (at the end)
   const proc = spawn(["gemini", ...args], {
     cwd: w.dir,
     stdout: "pipe",
@@ -508,16 +506,17 @@ async function runClaude(
   callbacks: StreamCallbacks = {},
 ): Promise<ProcWrap> {
   const prompt = `${systemConstraints("claude")}\n\n${featurePrompt("claude", base, task)}`;
+  // -p/--print enables non-interactive mode; prompt goes at the end as positional
   const args = [
-    "-p",
-    prompt,
+    "--print",
     "--model",
     MODELS.claude,
     "--output-format",
-    "json",
+    "stream-json",
     "--verbose",
   ];
   if (yolo) args.push("--dangerously-skip-permissions");
+  args.push(prompt); // Prompt must be positional (at the end)
   const proc = spawn(["claude", ...args], {
     cwd: w.dir,
     stdout: "pipe",
