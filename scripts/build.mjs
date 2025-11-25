@@ -1,10 +1,14 @@
 #!/usr/bin/env node
-import { mkdirSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { build } from "esbuild";
 
-const outfile = resolve("dist/cli.js");
-mkdirSync(resolve("dist"), { recursive: true });
+const distDir = resolve("dist");
+const outfile = resolve(distDir, "cli.js");
+
+// Clean dist to avoid bundling stale artifacts (e.g., old binaries)
+rmSync(distDir, { recursive: true, force: true });
+mkdirSync(distDir, { recursive: true });
 
 await build({
   entryPoints: ["src/cli.ts"],
