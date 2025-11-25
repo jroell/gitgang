@@ -23,7 +23,7 @@ declare const Bun: {
   argv: string[];
 };
 
-const VERSION = "1.4.6";
+const VERSION = "1.4.7";
 const REQUIRED_BINARIES = ["git", "gemini", "claude", "codex"] as const;
 const DEFAULT_AGENT_IDLE_TIMEOUT_MS = Number(
   process.env.GITGANG_AGENT_IDLE_TIMEOUT ?? 7 * 60 * 1000,
@@ -485,16 +485,19 @@ async function runGemini(
   // Use positional prompt argument (--prompt is deprecated)
   const args = ["-m", MODELS.gemini, "--output-format", "json"];
   if (yolo) args.push("--yolo");
-  args.push(prompt); // Prompt must be positional (at the end)
+  args.push(prompt);
   const proc = spawn(["gemini", ...args], {
     cwd: w.dir,
     stdout: "pipe",
     stderr: "pipe",
     stdin: "pipe",
   });
+  if (!proc.stdout || !proc.stderr) {
+    throw new Error("Failed to get stdout/stderr from gemini process");
+  }
   const stdinWriter = proc.stdin?.getWriter?.();
-  streamToLog(TAG("gemini"), w.log, C.purple, proc.stdout!, callbacks);
-  streamToLog(TAG("gemini"), w.log, C.purple, proc.stderr!, callbacks);
+  streamToLog(TAG("gemini"), w.log, C.purple, proc.stdout, callbacks);
+  streamToLog(TAG("gemini"), w.log, C.purple, proc.stderr, callbacks);
   return { proc, log: w.log, stdinWriter };
 }
 
@@ -506,7 +509,9 @@ async function runClaude(
   callbacks: StreamCallbacks = {},
 ): Promise<ProcWrap> {
   const prompt = `${systemConstraints("claude")}\n\n${featurePrompt("claude", base, task)}`;
-  // -p/--print enables non-interactive mode; prompt goes at the end as positional
+  // Write prompt to a temp file to avoid shell escaping issues
+  const promptFile = join(w.dir, ".logs", "claude-prompt.txt");
+  writeFileSync(promptFile, prompt);
   const args = [
     "--print",
     "--model",
@@ -516,16 +521,20 @@ async function runClaude(
     "--verbose",
   ];
   if (yolo) args.push("--dangerously-skip-permissions");
-  args.push(prompt); // Prompt must be positional (at the end)
-  const proc = spawn(["claude", ...args], {
+  // Wrap in bash to pipe prompt file to claude (works around Bun spawn issues)
+  const bashCmd = `cat "${promptFile}" | claude ${args.join(" ")}`;
+  const proc = spawn(["bash", "-c", bashCmd], {
     cwd: w.dir,
     stdout: "pipe",
     stderr: "pipe",
     stdin: "pipe",
   });
+  if (!proc.stdout || !proc.stderr) {
+    throw new Error("Failed to get stdout/stderr from claude process");
+  }
   const stdinWriter = proc.stdin?.getWriter?.();
-  streamToLog(TAG("claude"), w.log, C.yellow, proc.stdout!, callbacks);
-  streamToLog(TAG("claude"), w.log, C.yellow, proc.stderr!, callbacks);
+  streamToLog(TAG("claude"), w.log, C.yellow, proc.stdout, callbacks);
+  streamToLog(TAG("claude"), w.log, C.yellow, proc.stderr, callbacks);
   return { proc, log: w.log, stdinWriter };
 }
 
@@ -552,6 +561,9 @@ async function runCodexCoder(
     stderr: "pipe",
     stdin: "pipe",
   });
+  if (!proc.stdout || !proc.stderr) {
+    throw new Error("Failed to get stdout/stderr from codex process");
+  }
   const stdinWriter = proc.stdin?.getWriter?.();
   streamToLog(TAG("codex"), w.log, C.green, proc.stdout!, callbacks);
   streamToLog(TAG("codex"), w.log, C.green, proc.stderr!, callbacks);
