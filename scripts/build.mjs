@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, chmodSync } from "node:fs";
 import { resolve } from "node:path";
 import { build } from "esbuild";
 
@@ -21,5 +21,11 @@ await build({
   packages: "external",
   logLevel: "info",
 });
+
+try {
+  chmodSync(outfile, 0o755);
+} catch {
+  /* ignore chmod failures */
+}
 
 console.log(`Built ${outfile}`);

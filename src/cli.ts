@@ -10,6 +10,7 @@ import {
   rmSync,
   writeFileSync,
   chmodSync,
+  realpathSync,
 } from "node:fs";
 import type { Readable, Writable } from "node:stream";
 import { resolve, join } from "node:path";
@@ -20,7 +21,7 @@ import chalk from "chalk";
 import ora from "ora";
 import { renderSidebar } from "./sidebar.js";
 
-const VERSION = "1.4.18";
+const VERSION = "1.4.19";
 const REQUIRED_BINARIES = ["git", "gemini", "claude", "codex"] as const;
 const DEFAULT_AGENT_IDLE_TIMEOUT_MS = Number(
   process.env.GITGANG_AGENT_IDLE_TIMEOUT ?? 7 * 60 * 1000,
@@ -1961,9 +1962,15 @@ async function main() {
   process.exit(finalStatus === "approved" ? 0 : 1);
 }
 
-const isDirectRun = process.argv[1]
-  ? import.meta.url === pathToFileURL(process.argv[1]).href
-  : false;
+let isDirectRun = false;
+if (process.argv[1]) {
+  try {
+    const resolvedArg = pathToFileURL(realpathSync(process.argv[1])).href;
+    isDirectRun = resolvedArg === import.meta.url;
+  } catch {
+    isDirectRun = false;
+  }
+}
 
 if (isDirectRun) {
   main().catch((err) => {
