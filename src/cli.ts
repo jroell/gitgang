@@ -21,7 +21,7 @@ import chalk from "chalk";
 import ora from "ora";
 import { renderSidebar } from "./sidebar.js";
 
-const VERSION = "1.4.20";
+const VERSION = "1.4.21";
 const REQUIRED_BINARIES = ["git", "gemini", "claude", "codex"] as const;
 const DEFAULT_AGENT_IDLE_TIMEOUT_MS = Number(
   process.env.GITGANG_AGENT_IDLE_TIMEOUT ?? 7 * 60 * 1000,
@@ -130,7 +130,7 @@ interface ReviewerDecision {
 const MODELS = {
   gemini: "gemini-3-pro-preview",
   claude: "claude-opus-4-5-20251101",
-  codex: "gpt-5-codex",
+  codex: "gpt-5.1-codex-max",
 } as const;
 
 const C = {
@@ -580,7 +580,7 @@ async function runCodexCoder(
     "--model",
     MODELS.codex,
     "--config",
-    'model_reasoning_effort="high"',
+    'model_reasoning_effort="xhigh"',
   ];
   args.push(yolo ? "--yolo" : "--full-auto");
   const proc = spawnProcess(["codex", ...args], {
@@ -615,7 +615,7 @@ export function reviewerSpawnConfig(
     "--model",
     MODELS.codex,
     "--config",
-    'model_reasoning_effort="high"',
+    'model_reasoning_effort="xhigh"',
   ];
   args.push(yolo ? "--yolo" : "--full-auto");
   const options: Parameters<typeof spawn>[1] = {
