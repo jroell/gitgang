@@ -42,7 +42,7 @@ const ts = () => { const d=new Date(),p=(n:number)=>`${n}`.padStart(2,"0"); retu
 type AgentId = "gemini" | "claude" | "codex";
 interface Opts { task: string; repoRoot: string; baseBranch: string; workRoot: string; rounds: number; timeoutMs: number; yolo: boolean; autoPR: boolean; }
 interface Worktree { agent: AgentId; branch: string; dir: string; log: string }
-const MODELS = { gemini: "gemini-2.5-pro", claude: "claude-sonnet-4-5", codex: "gpt-5-codex" } as const;
+const MODELS = { gemini: "gemini-3-pro-preview", claude: "claude-sonnet-4-5", codex: "gpt-5-codex" } as const;
 
 // --------------------------- Git helpers ---------------------------
 async function git(cwd: string, ...args: (string | Record<string, string>)[]) { const res = await $`git ${args}`.cwd(cwd).quiet(); if (!res.success) throw new Error(`git ${args.join(" ")} failed: ${await res.text()}`); return (await res.text()).trim(); }

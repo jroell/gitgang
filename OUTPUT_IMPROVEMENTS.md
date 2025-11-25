@@ -47,7 +47,7 @@ All raw output is still written to `.logs/` directories for debugging, but the c
 
 ### After:
 ```
-[GEMINI] ⚙️  Initialized (gemini-2.5-pro)
+[GEMINI] ⚙️  Initialized (gemini-3-pro-preview)
 [GEMINI] └─ Task: I need you to get the vitest coverage of this project to be 90% covered...
 [GEMINI] 🔧 run_shell_command: Run vitest with coverage reporting
 [GEMINI]   Understood. I will increase Vitest coverage to 90%...

@@ -28,7 +28,7 @@ function banner(title: string, color: (s:string)=>string = C.cyan) { console.log
 type AgentId = "gemini" | "claude" | "codex";
 interface Opts { task: string; repoRoot: string; baseBranch: string; workRoot: string; rounds: number; timeoutMs: number; yolo: boolean; autoPR: boolean; }
 interface Worktree { agent: AgentId; branch: string; dir: string; log: string }
-const MODELS = { gemini: "gemini-2.5-pro", claude: "claude-sonnet-4-5", codex: "gpt-5-codex" } as const;
+const MODELS = { gemini: "gemini-3-pro-preview", claude: "claude-sonnet-4-5", codex: "gpt-5-codex" } as const;
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
   const proc = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });

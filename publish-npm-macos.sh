@@ -112,7 +112,7 @@ gitgang "Do this task"
 
 Notes:
 - Requires the following CLIs on PATH:
-  - gemini (Gemini CLI, model gemini-2.5-pro)
+  - gemini (Gemini CLI, model gemini-3-pro-preview)
   - claude (Claude Code CLI, model claude-sonnet-4-5)
   - codex (Codex CLI, model gpt-5-codex with high reasoning)
 - The CLI creates three git worktrees, runs agents, and uses a Codex reviewer loop.

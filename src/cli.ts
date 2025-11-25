@@ -23,7 +23,7 @@ declare const Bun: {
   argv: string[];
 };
 
-const VERSION = "1.4.7";
+const VERSION = "1.4.9";
 const REQUIRED_BINARIES = ["git", "gemini", "claude", "codex"] as const;
 const DEFAULT_AGENT_IDLE_TIMEOUT_MS = Number(
   process.env.GITGANG_AGENT_IDLE_TIMEOUT ?? 7 * 60 * 1000,
@@ -132,7 +132,7 @@ interface ReviewerDecision {
 }
 
 const MODELS = {
-  gemini: "gemini-2.5-pro",
+  gemini: "gemini-3-pro-preview",
   claude: "claude-sonnet-4-5",
   codex: "gpt-5-codex",
 } as const;
@@ -482,11 +482,17 @@ async function runGemini(
   callbacks: StreamCallbacks = {},
 ): Promise<ProcWrap> {
   const prompt = `${systemConstraints("gemini")}\n\n${featurePrompt("gemini", base, task)}`;
-  // Use positional prompt argument (--prompt is deprecated)
-  const args = ["-m", MODELS.gemini, "--output-format", "json"];
+  // Write prompt to a temp file to avoid shell escaping issues
+  const promptFile = join(w.dir, ".logs", "gemini-prompt.txt");
+  writeFileSync(promptFile, prompt);
+  const args = [
+    "-m", MODELS.gemini,
+    "--output-format", "stream-json",
+  ];
   if (yolo) args.push("--yolo");
-  args.push(prompt);
-  const proc = spawn(["gemini", ...args], {
+  // Wrap in bash to pipe prompt file to gemini (works around Bun spawn issues)
+  const bashCmd = `cat "${promptFile}" | gemini ${args.join(" ")}`;
+  const proc = spawn(["bash", "-c", bashCmd], {
     cwd: w.dir,
     stdout: "pipe",
     stderr: "pipe",
@@ -1942,19 +1948,14 @@ async function main() {
     banner("All done", C.green);
     console.log(C.green(`Approved. Merge branch ready: ${mergeBranch}`));
     if (opts.autoPR && mergeBranch) {
+      // Push the merge branch to remote for manual PR creation
       try {
-        const proc = Bun.spawn(
-          ["gh", "pr", "create", "--fill", "--base", opts.baseBranch, "--head", mergeBranch],
-          { cwd: opts.repoRoot, stdout: "pipe", stderr: "pipe" },
-        );
-        await proc.exited;
-        if (proc.exitCode === 0) {
-          console.log(C.green("PR created."));
-        } else {
-          console.log(C.yellow("GitHub CLI failed – skipping PR."));
-        }
-      } catch {
-        console.log(C.yellow("GitHub CLI failed – skipping PR."));
+        await git(opts.repoRoot, "push", "-u", "origin", mergeBranch);
+        console.log(C.green(`Branch pushed to origin. Create a PR when ready:`));
+        console.log(C.cyan(`  gh pr create --base ${opts.baseBranch} --head ${mergeBranch}`));
+      } catch (err) {
+        console.log(C.yellow(`Failed to push branch: ${err instanceof Error ? err.message : err}`));
+        console.log(C.gray(`You can push manually: git push -u origin ${mergeBranch}`));
       }
     }
   } else {
@@ -1964,6 +1965,9 @@ async function main() {
       if (dnfDetails) console.log(C.dim(dnfDetails));
     }
   }
+
+  // Ensure process exits cleanly
+  process.exit(finalStatus === "approved" ? 0 : 1);
 }
 
 if (import.meta.main) {
