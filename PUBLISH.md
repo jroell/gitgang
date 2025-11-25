@@ -1,76 +1,24 @@
 # Publishing GitGang Updates
 
-## Quick Publish (v1.4.0 - Improved Output)
+## Publish Checklist (Node build)
 
-These changes improve the output formatting significantly with better color coding, JSON filtering, and readability.
-
-### Steps to Publish:
-
-1. **Ensure NPM_TOKEN is set:**
-   ```bash
-   export NPM_TOKEN="your-npm-token-here"
-   ```
-
-2. **Run the publish script:**
-   ```bash
-   ./publish-npm-macos.sh
-   ```
-
-   This script will:
-   - Check for Bun installation
-   - Compile the CLI with `bun build`
-   - Create package.json with timestamp version
-   - Publish to npm as `gitgang`
-
-3. **Verify publication:**
-   ```bash
-   npm info gitgang
-   ```
-
-4. **Test globally:**
-   ```bash
-   npm install -g gitgang@latest
-   gg --version  # Should show 1.4.0
-   ```
-
-## What Changed in v1.4.0
-
-### User-Facing Improvements:
-- ✅ Color-coded agent output (Gemini=Magenta, Claude=Yellow, Codex=Green)
-- ✅ Filtered JSON noise - only shows relevant messages
-- ✅ Better formatting with emojis (💭 thinking, 🔧 tools, $ commands)
-- ✅ Cleaner section headers and banners
-- ✅ Raw logs still preserved in `.logs/` for debugging
-
-### Technical Changes:
-- New `StreamMessage` interface for JSON parsing
-- `parseStreamLine()` function to identify message types
-- `shouldDisplayLine()` filter to hide verbose metadata
-- `formatMessage()` with type-specific formatting
-- Enhanced `streamToLog()` with line-by-line processing
-
-## Git Workflow
-
+1) Set npm auth:
 ```bash
-# Stage all changes
-git add -A
-
-# Commit with descriptive message
-git commit -m "v1.4.0: Improve output formatting with color coding and JSON filtering"
-
-# Push to remote
-git push origin main
-
-# Tag the release
-git tag v1.4.0
-git push origin v1.4.0
+export NPM_TOKEN="your-npm-token-here"
 ```
 
-## Rollback (if needed)
-
-If issues arise:
+2) Run the release script (bumps patch, rebuilds dist/cli.js, publishes, pushes):
 ```bash
-npm unpublish gitgang@<version>  # Use specific version
+./release.sh
 ```
 
-Or publish a patch version with fixes.
+3) Verify:
+```bash
+npm info gitgang version
+npm install -g gitgang@latest
+gg --version
+```
+
+## Notes
+- The CLI is now bundled with esbuild for Node; no Bun binary is shipped.
+- `publish-npm-macos.sh` is legacy (Bun-based) and should be avoided; use `release.sh` instead.

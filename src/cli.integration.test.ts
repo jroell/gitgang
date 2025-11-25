@@ -1,5 +1,5 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { spawn } from "bun";
+import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -14,16 +14,11 @@ import {
 type GitArgs = [string, ...string[]];
 
 async function runGit(cwd: string, ...args: string[]) {
-  const proc = spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ]);
-  const exitCode = await proc.exited;
-  if (exitCode !== 0) {
-    throw new Error(`git ${args.join(" ")} failed: ${stderr || stdout}`);
+  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+  if (result.status !== 0) {
+    throw new Error(`git ${args.join(" ")} failed: ${result.stderr || result.stdout}`);
   }
-  return stdout.trim();
+  return (result.stdout || "").trim();
 }
 
 describe("applyMergePlan integration", () => {

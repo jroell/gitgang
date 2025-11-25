@@ -1,7 +1,7 @@
 // GitGang - The gang's all here to code!
 // Hardened orchestration CLI for autonomous multi-agent development.
 
-import { spawn } from "bun";
+import { spawn, type SpawnOptions, type ChildProcess } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -11,19 +11,16 @@ import {
   writeFileSync,
   chmodSync,
 } from "node:fs";
+import type { Readable, Writable } from "node:stream";
 import { resolve, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import * as readline from "node:readline";
 import chalk from "chalk";
 import ora from "ora";
 import { renderSidebar } from "./sidebar.js";
 
-declare const Bun: {
-  spawn: typeof spawn;
-  argv: string[];
-};
-
-const VERSION = "1.4.9";
+const VERSION = "1.4.17";
 const REQUIRED_BINARIES = ["git", "gemini", "claude", "codex"] as const;
 const DEFAULT_AGENT_IDLE_TIMEOUT_MS = Number(
   process.env.GITGANG_AGENT_IDLE_TIMEOUT ?? 7 * 60 * 1000,
@@ -38,14 +35,12 @@ const POST_TIMEOUT_GRACE_MS = 3 * 1000; // Allow short grace after round timeout
 const MAX_AGENT_BACKOFF_MS = 2 * 60 * 1000;
 const REVIEWER_MAX_RETRIES = 3;
 const REVIEWER_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes timeout for reviewer process
-const DEFAULT_POST_MERGE_CHECKS = ["bun test"];
+const DEFAULT_POST_MERGE_CHECKS: string[] = [];
 const GLOBAL_TIMEOUT_GRACE_MS = 15_000;
 
 const supportsColor =
   process.stdout.isTTY && !process.env.NO_COLOR && process.env.TERM !== "dumb";
 chalk.level = supportsColor ? (process.env.COLORTERM === "truecolor" ? 3 : 2) : 0;
-
-const textEncoder = new TextEncoder();
 
 type AgentId = "gemini" | "claude" | "codex";
 const AGENT_IDS: AgentId[] = ["gemini", "claude", "codex"];
@@ -78,9 +73,9 @@ interface Worktree {
 }
 
 interface ProcWrap {
-  proc: ReturnType<typeof spawn>;
+  proc: SpawnedProcess;
   log: string;
-  stdinWriter?: WritableStreamDefaultWriter<Uint8Array>;
+  stdinWriter?: Writable | null;
 }
 
 interface StreamMessage {
@@ -176,6 +171,50 @@ function normalizeStreamRaw(text: string) {
   return stripAnsi(text).trim();
 }
 
+type SpawnedProcess = ChildProcess & { exited: Promise<number> };
+
+function spawnProcess(cmd: [string, ...string[]], options?: SpawnOptions): SpawnedProcess {
+  const [command, ...args] = cmd;
+  const proc = spawn(command, args, {
+    stdio: ["pipe", "pipe", "pipe"],
+    ...options,
+  });
+
+  const exited = new Promise<number>((resolve, reject) => {
+    proc.once("error", reject);
+    proc.once("exit", (code, signal) => resolve(code ?? (signal ? 1 : 0)));
+  });
+
+  (proc as SpawnedProcess).exited = exited;
+  return proc as SpawnedProcess;
+}
+
+async function readStream(stream?: Readable | null): Promise<string> {
+  if (!stream) return "";
+  return new Promise((resolve, reject) => {
+    let data = "";
+    stream.setEncoding("utf8");
+    stream.on("data", (chunk) => {
+      data += chunk;
+    });
+    stream.on("error", (err) => reject(err));
+    stream.on("end", () => resolve(data));
+  });
+}
+
+async function runCommand(
+  cmd: [string, ...string[]],
+  options?: SpawnOptions,
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  const proc = spawnProcess(cmd, options);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    readStream(proc.stdout),
+    readStream(proc.stderr),
+    proc.exited,
+  ]);
+  return { stdout, stderr, exitCode };
+}
+
 function box(title: string, color: (s: string) => string = C.cyan, width = 84) {
   const contentWidth = width - 4;
   const titlePadded = ` ${title} `;
@@ -200,16 +239,7 @@ function banner(title: string, color: (s: string) => string = C.cyan) {
 }
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
-  const proc = Bun.spawn(["git", ...args], {
-    cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ]);
-  const exitCode = await proc.exited;
+  const { stdout, stderr, exitCode } = await runCommand(["git", ...args], { cwd });
   if (exitCode !== 0) {
     throw new Error(
       `git ${args.join(" ")} failed (exit ${exitCode}): ${stderr || stdout}`,
@@ -226,12 +256,7 @@ async function ensureCleanTree(cwd: string) {
 }
 
 async function repoRoot(): Promise<string> {
-  const proc = Bun.spawn(["git", "rev-parse", "--show-toplevel"], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const stdout = await new Response(proc.stdout).text();
-  const exitCode = await proc.exited;
+  const { stdout, exitCode } = await runCommand(["git", "rev-parse", "--show-toplevel"]);
   if (exitCode !== 0) throw new Error("Not in a git repository");
   return stdout.trim();
 }
@@ -268,7 +293,6 @@ function systemConstraints(agent: AgentId) {
     "Work in small, verifiable steps and commit early with clear messages.",
     "Add or update tests to cover the change.",
     "If something fails, debug and keep going until complete.",
-    "If a tool such as bun is unavailable, immediately fallback to 'npx bun …' so progress continues.",
     "Prefer editing files with apply_patch or here-doc writes; the 'replace' tool can fail when paths include extra whitespace.",
     "At the end, summarize what changed and any follow ups.",
   ].join("\n");
@@ -422,7 +446,7 @@ function streamToLog(
   prefix: string,
   logFile: string,
   color: (s: string) => string,
-  stream: ReadableStream<Uint8Array>,
+  stream: Readable,
   callbacks: StreamCallbacks = {},
 ) {
   const dec = new TextDecoder();
@@ -431,7 +455,10 @@ function streamToLog(
   (async () => {
     try {
       for await (const chunk of stream) {
-        const text = dec.decode(chunk, { stream: true });
+        const text =
+          typeof chunk === "string"
+            ? chunk
+            : dec.decode(chunk as Buffer, { stream: true });
         buffer += text;
 
         const lines = buffer.split("\n");
@@ -490,18 +517,15 @@ async function runGemini(
     "--output-format", "stream-json",
   ];
   if (yolo) args.push("--yolo");
-  // Wrap in bash to pipe prompt file to gemini (works around Bun spawn issues)
+  // Wrap in bash to pipe prompt file to gemini to avoid shell escaping issues
   const bashCmd = `cat "${promptFile}" | gemini ${args.join(" ")}`;
-  const proc = spawn(["bash", "-c", bashCmd], {
+  const proc = spawnProcess(["bash", "-c", bashCmd], {
     cwd: w.dir,
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "pipe",
   });
   if (!proc.stdout || !proc.stderr) {
     throw new Error("Failed to get stdout/stderr from gemini process");
   }
-  const stdinWriter = proc.stdin?.getWriter?.();
+  const stdinWriter = proc.stdin;
   streamToLog(TAG("gemini"), w.log, C.purple, proc.stdout, callbacks);
   streamToLog(TAG("gemini"), w.log, C.purple, proc.stderr, callbacks);
   return { proc, log: w.log, stdinWriter };
@@ -527,18 +551,15 @@ async function runClaude(
     "--verbose",
   ];
   if (yolo) args.push("--dangerously-skip-permissions");
-  // Wrap in bash to pipe prompt file to claude (works around Bun spawn issues)
+  // Wrap in bash to pipe prompt file to claude to avoid shell escaping issues
   const bashCmd = `cat "${promptFile}" | claude ${args.join(" ")}`;
-  const proc = spawn(["bash", "-c", bashCmd], {
+  const proc = spawnProcess(["bash", "-c", bashCmd], {
     cwd: w.dir,
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "pipe",
   });
   if (!proc.stdout || !proc.stderr) {
     throw new Error("Failed to get stdout/stderr from claude process");
   }
-  const stdinWriter = proc.stdin?.getWriter?.();
+  const stdinWriter = proc.stdin;
   streamToLog(TAG("claude"), w.log, C.yellow, proc.stdout, callbacks);
   streamToLog(TAG("claude"), w.log, C.yellow, proc.stderr, callbacks);
   return { proc, log: w.log, stdinWriter };
@@ -561,16 +582,13 @@ async function runCodexCoder(
     'model_reasoning_effort="high"',
   ];
   args.push(yolo ? "--yolo" : "--full-auto");
-  const proc = spawn(["codex", ...args], {
+  const proc = spawnProcess(["codex", ...args], {
     cwd: w.dir,
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "pipe",
   });
   if (!proc.stdout || !proc.stderr) {
     throw new Error("Failed to get stdout/stderr from codex process");
   }
-  const stdinWriter = proc.stdin?.getWriter?.();
+  const stdinWriter = proc.stdin;
   streamToLog(TAG("codex"), w.log, C.green, proc.stdout!, callbacks);
   streamToLog(TAG("codex"), w.log, C.green, proc.stderr!, callbacks);
   return { proc, log: w.log, stdinWriter };
@@ -578,7 +596,7 @@ async function runCodexCoder(
 
 interface ReviewerSpawnConfig {
   args: string[];
-  options: Parameters<typeof spawn>[1];
+  options: SpawnOptions;
 }
 
 export function reviewerSpawnConfig(
@@ -617,7 +635,7 @@ async function runCodexReviewer(
   statusSummary?: string,
 ) {
   const { args, options } = reviewerSpawnConfig(cwd, base, branches, task, yolo, statusSummary);
-  return spawn(["codex", ...args], options);
+  return spawnProcess(["codex", ...args], options);
 }
 
 function parseFirstJson(s: string) {
@@ -634,9 +652,8 @@ async function ensureDependencies(autoPR: boolean) {
   const missing: string[] = [];
 
   for (const bin of REQUIRED_BINARIES) {
-    const proc = Bun.spawn(["which", bin], { stdout: "pipe", stderr: "pipe" });
-    await proc.exited;
-    if (proc.exitCode !== 0) {
+    const result = await runCommand(["which", bin]);
+    if (result.exitCode !== 0) {
       missing.push(bin);
     }
   }
@@ -648,8 +665,7 @@ async function ensureDependencies(autoPR: boolean) {
   }
 
   if (autoPR) {
-    const ghProc = Bun.spawn(["which", "gh"], { stdout: "pipe", stderr: "pipe" });
-    await ghProc.exited;
+    const ghProc = await runCommand(["which", "gh"]);
     if (ghProc.exitCode !== 0) {
       console.log(
         C.yellow(
@@ -663,30 +679,9 @@ async function ensureDependencies(autoPR: boolean) {
   return { autoPR };
 }
 
-async function ensureBunShim(repoRoot: string, workRoot: string) {
-  const check = Bun.spawn(["which", "bun"], { stdout: "pipe", stderr: "pipe" });
-  await check.exited;
-  if (check.exitCode === 0) return undefined;
-
-  const shimDir = resolve(repoRoot, workRoot, ".bin");
-  mkdirSync(shimDir, { recursive: true });
-  const shimPath = join(shimDir, "bun");
-  if (!existsSync(shimPath)) {
-    const shim = `#!/usr/bin/env bash\nset -euo pipefail\nif command -v bun >/dev/null 2>&1; then\n  exec bun "$@"\nfi\nexec npx --yes bun "$@"\n`;
-    writeFileSync(shimPath, shim);
-    try {
-      chmodSync(shimPath, 0o755);
-    } catch {
-      // Ignore chmod failures on restrictive filesystems
-    }
-  }
-  return shimDir;
-}
-
 async function prepareRuntime(opts: Opts) {
   const depResult = await ensureDependencies(opts.autoPR);
-  const shimPath = await ensureBunShim(opts.repoRoot, opts.workRoot);
-  return { autoPR: depResult.autoPR, shimPath };
+  return { autoPR: depResult.autoPR };
 }
 
 function parseArgs(raw: string[]) {
@@ -851,8 +846,8 @@ class AgentRunner {
   private readonly baseBranch: string;
   private readonly opts: Opts;
   private currentTask = "";
-  private proc?: ReturnType<typeof spawn>;
-  private stdinWriter?: WritableStreamDefaultWriter<Uint8Array>;
+  private proc?: SpawnedProcess;
+  private stdinWriter?: Writable | null;
   private restarts = 0;
   private backoffMs = INITIAL_AGENT_BACKOFF_MS;
   private lastActivity = Date.now();
@@ -965,7 +960,7 @@ class AgentRunner {
       this.startHeartbeat();
 
       wrap.proc.exited
-        .then((exitCode) => this.handleExit(exitCode ?? wrap.proc.exitCode ?? 0))
+        .then((exitCode) => this.handleExit(exitCode))
         .catch((err) => this.handleFailure(`exit error: ${err}`, 1));
     } catch (err) {
       this.handleFailure(
@@ -980,9 +975,11 @@ class AgentRunner {
     const writer = this.stdinWriter;
     this.stdinWriter = undefined;
     if (writer) {
-      writer.close().catch(() => {
+      try {
+        writer.end();
+      } catch {
         /* ignore */
-      });
+      }
     }
     this.proc = undefined;
 
@@ -1162,13 +1159,11 @@ class AgentRunner {
   }
 
   async nudge(message: string) {
-    if (!this.stdinWriter) return false;
-    try {
-      await this.stdinWriter.write(textEncoder.encode(`\nProxy: ${message}\n`));
-      return true;
-    } catch {
-      return false;
-    }
+    const writer = this.stdinWriter;
+    if (!writer || writer.destroyed) return false;
+    return new Promise<boolean>((resolve) => {
+      writer.write(`\nProxy: ${message}\n`, (err) => resolve(!err));
+    });
   }
 
   terminate() {
@@ -1445,16 +1440,14 @@ function startDashboardTicker(params: {
 
 async function runPostMergeCheck(cmd: string, repo: string) {
   console.log(C.gray(`Running post-merge check: ${cmd}`));
-  const proc = Bun.spawn(["bash", "-lc", cmd], {
+  const proc = spawnProcess(["bash", "-lc", cmd], {
     cwd: repo,
-    stdout: "pipe",
-    stderr: "pipe",
   });
-  const [stdout, stderr] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
+  const [stdout, stderr, exitCode] = await Promise.all([
+    readStream(proc.stdout),
+    readStream(proc.stderr),
+    proc.exited,
   ]);
-  const exitCode = await proc.exited;
   if (stdout.trim()) process.stdout.write(stdout);
   if (stderr.trim()) process.stderr.write(stderr);
   return exitCode;
@@ -1626,20 +1619,25 @@ async function doReview(
       setTimeout(() => reject(new Error("Reviewer timeout")), REVIEWER_TIMEOUT_MS);
     });
 
+    const capture = Promise.all([
+      Promise.all([readStream(proc.stdout), readStream(proc.stderr)]),
+      proc.exited,
+    ]).then(([[stdout, stderr], exitCode]) => ({
+      stdout,
+      stderr,
+      exitCode,
+    }));
+
     let stdout: string;
     let stderr: string;
     let exitCode: number;
 
     try {
       // Read streams and wait for exit in parallel with timeout
-      [stdout, stderr, exitCode] = await Promise.race([
-        Promise.all([
-          new Response(proc.stdout!).text(),
-          new Response(proc.stderr!).text(),
-          proc.exited,
-        ]),
+      ({ stdout, stderr, exitCode } = await Promise.race([
+        capture,
         timeoutPromise,
-      ]);
+      ]));
     } catch (err) {
       // Timeout or other error - kill the process
       proc.kill();
@@ -1747,7 +1745,7 @@ While running
 }
 
 async function main() {
-  const argv = Bun.argv.slice(2);
+  const argv = process.argv.slice(2);
   if (argv.includes("--help") || argv.includes("-h")) {
     printHelp();
     return;
@@ -1780,13 +1778,6 @@ async function main() {
 
   const runtime = await prepareRuntime(opts);
   opts = { ...opts, autoPR: runtime.autoPR };
-  if (runtime.shimPath) {
-    const currentPath = process.env.PATH || "";
-    if (!currentPath.split(":").includes(runtime.shimPath)) {
-      process.env.PATH = `${runtime.shimPath}:${currentPath}`;
-    }
-    console.log(C.yellow("bun not found – using npx bun shim for agent runs."));
-  }
 
   banner("🤘 GitGang - The gang's all here to code!", C.blue);
   console.log(`${C.gray("Repository:")} ${C.cyan(repo)}`);
@@ -1970,7 +1961,11 @@ async function main() {
   process.exit(finalStatus === "approved" ? 0 : 1);
 }
 
-if (import.meta.main) {
+const isDirectRun = process.argv[1]
+  ? import.meta.url === pathToFileURL(process.argv[1]).href
+  : false;
+
+if (isDirectRun) {
   main().catch((err) => {
     console.error(C.red(String(err?.stack || err)));
     process.exit(1);

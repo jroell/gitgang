@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# publish-npm-macos.sh
-# One-shot macOS script that builds and publishes @jroell/ai-orchestrator to npm.
-# Requirements: macOS, git, npm, curl. The script installs Bun via Homebrew if needed.
+# Deprecated: use ./release.sh instead. Kept for reference.
+echo "[publish] Deprecated script. Run ./release.sh instead."
+exit 1
 
 # ---------- Config (you can tweak) ----------
 PKG_SCOPE=""

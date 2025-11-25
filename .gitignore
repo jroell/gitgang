@@ -7,6 +7,8 @@ yarn-error.log*
 # Build outputs
 dist/
 *.log
+gitgang
+bun.lock
 
 # Worktrees
 .ai-worktrees/

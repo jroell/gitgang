@@ -1,15 +1,21 @@
 {
   "name": "gitgang",
-"version": "1.4.10",
+  "version": "1.4.17",
   "type": "module",
   "description": "The gang's all here to code - AI-powered collaborative development",
   "bin": {
-    "gitgang": "./gitgang",
-    "gg": "./gitgang"
+    "gitgang": "./dist/cli.js",
+    "gg": "./dist/cli.js"
   },
   "scripts": {
+    "test": "vitest run",
+    "build": "node scripts/build.mjs",
     "postinstall": "node scripts/ensure-clis.mjs"
   },
+  "files": [
+    "dist",
+    "scripts/ensure-clis.mjs"
+  ],
   "dependencies": {
     "boxen": "^8.0.1",
     "chalk": "^5.3.0",
@@ -19,6 +25,8 @@
     "terminal-link": "^5.0.0"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/node": "^22.7.4",
+    "esbuild": "^0.23.1",
+    "vitest": "^2.1.1"
   }
 }

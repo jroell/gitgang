@@ -21,15 +21,12 @@ GitGang now has **beautiful, color-coded output** instead of JSON noise!
 # 1. Set your npm token
 export NPM_TOKEN='your-npm-token-here'
 
-# 2. Run the publish script
+# 2. Run the release script (bumps version, builds dist/cli.js, publishes, pushes)
 cd /Users/jasonroell/ai-orchestrator
-./publish-npm-macos.sh
+./release.sh
 
 # 3. Commit and tag
-git add -A
-git commit -m "v1.4.0: Improve output formatting"
-git tag v1.4.0
-git push origin main --tags
+# release.sh already commits and pushes; tags are optional
 ```
 
 ## Installing (For Users)

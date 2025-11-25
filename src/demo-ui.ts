@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 /**
  * Demo script to showcase the polished GitGang sidebar UI
  */

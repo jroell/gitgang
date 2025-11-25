@@ -2,7 +2,7 @@
 
 > The gang's all here to code — Multi-agent AI orchestration for autonomous software development
 
-**GitGang** is a powerful Bun-based CLI that coordinates multiple AI agents (Gemini, Claude, and Codex) to collaboratively solve complex coding tasks. Each agent works in isolation on git worktrees, and a reviewer agent merges the best solutions.
+**GitGang** is a Node-based CLI (bundled with esbuild) that coordinates multiple AI agents (Gemini, Claude, and Codex) to collaboratively solve complex coding tasks. Each agent works in isolation on git worktrees, and a reviewer agent merges the best solutions.
 
 [![npm version](https://img.shields.io/npm/v/gitgang.svg)](https://www.npmjs.com/package/gitgang)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -16,7 +16,7 @@
 - **Intelligent Review Loop**: Codex reviewer analyzes all solutions and merges the best parts
 - **Interactive Command Palette**: Monitor and control agents in real-time
 - **Autonomous Execution**: Agents work independently with full permissions (optional yolo mode)
-- **Native Binary**: Fast, compiled Bun executable (~58MB with bundled dependencies)
+- **Single-File Bundle**: Lightweight Node CLI built with esbuild (no Bun required)
 
 ## 📦 Installation
 
@@ -105,10 +105,9 @@ While agents are running, use these slash commands:
 
 ## 📋 Requirements
 
-- **macOS** (Darwin only)
+- **macOS** (tested; should work anywhere with git and Node)
 - **Git** repository with clean working tree
-- **Node.js** / **npm** for installation
-- **Bun** runtime (auto-installed via Homebrew if missing)
+- **Node.js 18+** / **npm** for installation
 - **AI CLI Tools**: gemini, claude, codex
 - **Terminal**: RGB color support recommended (iTerm2, Terminal.app, Hyper, etc.)
   - Gracefully falls back to basic ANSI colors in unsupported terminals
@@ -122,14 +121,12 @@ While agents are running, use these slash commands:
 git clone https://github.com/jroell/gitgang.git
 cd gitgang
 
-# Install Bun
-brew install bun
-
-# Build native binary
-bun build ./src/cli.ts --compile --outfile ./dist/gitgang
+# Install deps
+npm install
 
 # Run locally
-./dist/gitgang "Test task"
+npm run build
+node dist/cli.js "Test task"
 ```
 
 ### Sidebar Demo
@@ -142,12 +139,6 @@ import { renderHelloWorldSidebar } from "./src/sidebar.ts";
 console.log(renderHelloWorldSidebar());
 ```
 
-Or run the bundled demo script:
-
-```bash
-bun run src/demo-ui.ts
-```
-
 ### Publishing
 
 ```bash
@@ -155,7 +146,7 @@ bun run src/demo-ui.ts
 export NPM_TOKEN='your_npm_token_here'
 
 # Run publish script
-./publish-npm-macos.sh
+./release.sh
 ```
 
 ## 🎯 Use Cases

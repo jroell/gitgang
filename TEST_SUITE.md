@@ -196,18 +196,18 @@ Tests for agent-specific functionality:
 
 ```bash
 # Run all tests
-bun test
+npm test
 
 # Run specific test file
-bun test src/cli.test.ts
-bun test src/cli.integration.test.ts
-bun test src/cli.agents.test.ts
+npx vitest run src/cli.test.ts
+npx vitest run src/cli.integration.test.ts
+npx vitest run src/cli.agents.test.ts
 
 # Run with verbose output
-bun test --verbose
+npx vitest run --reporter=verbose
 
 # Run and stop on first failure
-bun test --bail
+npx vitest run --bail
 ```
 
 ## Test Statistics
