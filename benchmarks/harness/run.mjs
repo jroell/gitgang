@@ -102,15 +102,20 @@ function findBranches(repoDir) {
 
 async function verifyBranch(task, repoDir, branch) {
   if (!branch) return { pass: false, error: "branch not found" };
-  const wt = mkdtempSync(join(tmpdir(), `gg-verify-${task.id}-`));
+  // Read solution file directly from the branch via git show; this avoids
+  // conflicts with any worktree gitgang itself still holds for the branch.
+  const dir = mkdtempSync(join(tmpdir(), `gg-verify-${task.id}-`));
   try {
-    git(repoDir, "worktree", "add", "-q", wt, branch);
-    return await verifySolutionDir(task, wt);
+    const res = sh("git", ["show", `${branch}:${task.solutionPath}`], { cwd: repoDir, allowFail: true });
+    if (res.status !== 0) return { pass: false, error: `git show failed: ${(res.stderr || "").slice(0, 200)}` };
+    const full = join(dir, task.solutionPath);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, res.stdout);
+    return await verifySolutionDir(task, dir);
   } catch (err) {
     return { pass: false, error: (err?.message || String(err)).slice(0, 400) };
   } finally {
-    try { git(repoDir, "worktree", "remove", "-f", wt); } catch {}
-    rmSync(wt, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
   }
 }
 
