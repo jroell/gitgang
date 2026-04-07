@@ -7,6 +7,8 @@ import { randomUUID } from "node:crypto";
 import {
   applyMergePlan,
   reviewerSpawnConfig,
+  reviewerPromptJSON,
+  collectDiffSummaries,
   type Opts,
   type ReviewerDecision,
 } from "./cli";
@@ -137,5 +139,98 @@ describe("reviewer spawn config", () => {
   test("falls back to full-auto when not yolo", () => {
     const config = reviewerSpawnConfig("/tmp/repo", "main", branches, "Test task", false);
     expect(config.args).toContain("--full-auto");
+  });
+
+  test("includes diff summaries in reviewer prompt when provided", () => {
+    const diffSummaries = {
+      gemini: "src/foo.ts | 20 +++++\n 1 file changed, 20 insertions(+)",
+      claude: "src/bar.ts | 5 +\n 1 file changed, 5 insertions(+)",
+      codex: "(no changes)",
+    };
+    const config = reviewerSpawnConfig(
+      "/tmp/repo",
+      "main",
+      branches,
+      "Add a widget",
+      true,
+      "- gemini: completed\n- claude: completed\n- codex: dnf",
+      diffSummaries,
+    );
+    // The prompt is the first positional arg passed to codex exec
+    const prompt = config.args[1];
+    expect(prompt).toContain("Diff summaries vs main");
+    expect(prompt).toContain("--- gemini ---");
+    expect(prompt).toContain("src/foo.ts");
+    expect(prompt).toContain("--- codex ---");
+    expect(prompt).toContain("(no changes)");
+  });
+
+  test("reviewer prompt omits diff section when no summaries provided", () => {
+    const config = reviewerSpawnConfig("/tmp/repo", "main", branches, "Add a widget", true);
+    const prompt = config.args[1];
+    expect(prompt).not.toContain("Diff summaries");
+  });
+});
+
+describe("collectDiffSummaries integration", () => {
+  let repo: string;
+
+  beforeEach(async () => {
+    repo = join(tmpdir(), `gitgang-diff-${randomUUID()}`);
+    mkdirSync(repo, { recursive: true });
+    await runGit(repo, "init");
+    await runGit(repo, "config", "user.name", "Test User");
+    await runGit(repo, "config", "user.email", "test@example.com");
+    writeFileSync(join(repo, "README.md"), "# Base\n");
+    await runGit(repo, "add", ".");
+    await runGit(repo, "commit", "-m", "initial");
+    await runGit(repo, "branch", "-M", "main");
+  });
+
+  afterEach(() => {
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  test("returns diff stat for a branch with changes", async () => {
+    await runGit(repo, "checkout", "-b", "agents/gemini/test", "main");
+    writeFileSync(join(repo, "feature.ts"), "export const x = 1;\n");
+    await runGit(repo, "add", "feature.ts");
+    await runGit(repo, "commit", "-m", "gemini adds feature");
+    await runGit(repo, "checkout", "main");
+
+    const summaries = await collectDiffSummaries(repo, "main", {
+      gemini: "agents/gemini/test",
+      claude: "agents/gemini/test",
+      codex: "agents/gemini/test",
+    });
+
+    expect(summaries.gemini).toContain("feature.ts");
+    expect(summaries.gemini).not.toBe("(no changes)");
+  });
+
+  test("reports no changes for a branch identical to base", async () => {
+    await runGit(repo, "checkout", "-b", "agents/claude/empty", "main");
+    await runGit(repo, "checkout", "main");
+
+    const summaries = await collectDiffSummaries(repo, "main", {
+      gemini: "agents/claude/empty",
+      claude: "agents/claude/empty",
+      codex: "agents/claude/empty",
+    });
+
+    expect(summaries.gemini).toBe("(no changes)");
+  });
+
+  test("handles missing branch gracefully", async () => {
+    const summaries = await collectDiffSummaries(repo, "main", {
+      gemini: undefined,
+      claude: "agents/claude/nonexistent",
+      codex: undefined,
+    });
+
+    expect(summaries.gemini).toBe("(branch not available)");
+    expect(summaries.codex).toBe("(branch not available)");
+    // nonexistent branch should return error message, not throw
+    expect(typeof summaries.claude).toBe("string");
   });
 });

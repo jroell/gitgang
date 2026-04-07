@@ -21,7 +21,7 @@ import chalk from "chalk";
 import ora from "ora";
 import { renderSidebar } from "./sidebar.js";
 
-const VERSION = "1.4.21";
+const VERSION = "1.4.23";
 const REQUIRED_BINARIES = ["git", "gemini", "claude", "codex"] as const;
 const DEFAULT_AGENT_IDLE_TIMEOUT_MS = Number(
   process.env.GITGANG_AGENT_IDLE_TIMEOUT ?? 7 * 60 * 1000,
@@ -128,9 +128,9 @@ interface ReviewerDecision {
 }
 
 const MODELS = {
-  gemini: "gemini-3-pro-preview",
-  claude: "claude-opus-4-5-20251101",
-  codex: "gpt-5.1-codex-max",
+  gemini: "gemini-3-1-pro",
+  claude: "claude-opus-4-6",
+  codex: "gpt-5.4",
 } as const;
 
 const C = {
@@ -322,7 +322,14 @@ function reviewerPromptJSON(
   branches: { gemini: string; claude: string; codex: string },
   task: string,
   statusSummary?: string,
+  diffSummaries?: Partial<Record<AgentId, string>>,
 ) {
+  const diffSection = diffSummaries
+    ? `\nDiff summaries vs ${base}:\n${(["gemini", "claude", "codex"] as AgentId[])
+        .map((id) => `--- ${id} ---\n${diffSummaries[id] ?? "(no data)"}`)
+        .join("\n\n")}\n`
+    : "";
+
   return `You are the final reviewer. Compare these branches against ${base}:
 - ${branches.gemini}
 - ${branches.claude}
@@ -334,13 +341,38 @@ Goal: Pick the best parts from each and integrate into a new merge branch off ${
 
 Status summary:
 ${statusSummary || "- gemini: pending\n- claude: pending\n- codex: pending"}
-
+${diffSection}
 Output JSON only with this schema:
 {
   "status": "approve" | "revise",
   "mergePlan": { "order": ["branchName", ...], "notes": "why this order", "postMergeChecks": ["command", ...] },
   "revisions": [{ "agent": "gemini" | "claude" | "codex", "instructions": "actionable steps" }]
 }`;
+}
+
+export async function collectDiffSummaries(
+  repoRoot: string,
+  baseBranch: string,
+  branches: Partial<Record<AgentId, string>>,
+): Promise<Partial<Record<AgentId, string>>> {
+  const summaries: Partial<Record<AgentId, string>> = {};
+  for (const id of AGENT_IDS) {
+    const branch = branches[id];
+    if (!branch) {
+      summaries[id] = "(branch not available)";
+      continue;
+    }
+    try {
+      const { stdout, exitCode } = await runCommand(
+        ["git", "diff", "--stat", `${baseBranch}...${branch}`],
+        { cwd: repoRoot },
+      );
+      summaries[id] = exitCode === 0 && stdout.trim() ? stdout.trim() : "(no changes)";
+    } catch {
+      summaries[id] = "(could not compute diff)";
+    }
+  }
+  return summaries;
 }
 
 function parseStreamLine(line: string): StreamMessage | null {
@@ -607,8 +639,9 @@ export function reviewerSpawnConfig(
   task: string,
   yolo: boolean,
   statusSummary?: string,
+  diffSummaries?: Partial<Record<AgentId, string>>,
 ): ReviewerSpawnConfig {
-  const prompt = reviewerPromptJSON(base, branches, task, statusSummary);
+  const prompt = reviewerPromptJSON(base, branches, task, statusSummary, diffSummaries);
   const args = [
     "exec",
     prompt,
@@ -634,8 +667,9 @@ async function runCodexReviewer(
   task: string,
   yolo: boolean,
   statusSummary?: string,
+  diffSummaries?: Partial<Record<AgentId, string>>,
 ) {
-  const { args, options } = reviewerSpawnConfig(cwd, base, branches, task, yolo, statusSummary);
+  const { args, options } = reviewerSpawnConfig(cwd, base, branches, task, yolo, statusSummary, diffSummaries);
   return spawnProcess(["codex", ...args], options);
 }
 
@@ -1600,6 +1634,12 @@ async function doReview(
   for (let attempt = 1; attempt <= REVIEWER_MAX_RETRIES; attempt++) {
     console.log(C.gray(`Starting reviewer attempt ${attempt}/${REVIEWER_MAX_RETRIES}...`));
 
+    const diffSummaries = await collectDiffSummaries(opts.repoRoot, opts.baseBranch, {
+      gemini: agents.gemini.worktree.branch,
+      claude: agents.claude.worktree.branch,
+      codex: agents.codex.worktree.branch,
+    });
+
     const proc = await runCodexReviewer(
       opts.repoRoot,
       opts.baseBranch,
@@ -1611,6 +1651,7 @@ async function doReview(
       opts.task,
       opts.yolo,
       statusSummary,
+      diffSummaries,
     );
 
     console.log(C.gray(`Reviewer process started, waiting for response (timeout: ${REVIEWER_TIMEOUT_MS / 1000}s)...`));
@@ -1714,6 +1755,79 @@ async function doReview(
   };
 }
 
+// ────────────────────────────────────────────────────────────────
+// Run report generation — structured JSON summary of each run
+// ────────────────────────────────────────────────────────────────
+
+interface AgentReport {
+  agent: AgentId;
+  model: string;
+  branch: string;
+  status: "success" | "dnf";
+  exitCode: number;
+  restarts: number;
+  reason?: string;
+  stats: AgentStats;
+  lastError?: string;
+}
+
+interface RunReport {
+  version: string;
+  timestamp: string;
+  task: string;
+  baseBranch: string;
+  outcome: "approved" | "dnf";
+  mergeBranch?: string;
+  durationMs: number;
+  rounds: number;
+  agents: AgentReport[];
+  models: Record<AgentId, string>;
+}
+
+function generateRunReport(
+  opts: Opts,
+  agentResults: Array<{ id: AgentId; result: AgentRunResult }>,
+  agents: Record<AgentId, AgentRunner>,
+  outcome: "approved" | "dnf",
+  startTime: number,
+  mergeBranch?: string,
+): RunReport {
+  const agentReports: AgentReport[] = agentResults.map(({ id, result }) => ({
+    agent: id,
+    model: MODELS[id],
+    branch: agents[id].worktree.branch,
+    status: result.status,
+    exitCode: result.exitCode,
+    restarts: result.restarts,
+    reason: result.reason,
+    stats: agents[id].getStats(),
+    lastError: agents[id].getLastError(),
+  }));
+
+  return {
+    version: VERSION,
+    timestamp: new Date().toISOString(),
+    task: opts.task,
+    baseBranch: opts.baseBranch,
+    outcome,
+    mergeBranch,
+    durationMs: Date.now() - startTime,
+    rounds: opts.rounds,
+    agents: agentReports,
+    models: { ...MODELS },
+  };
+}
+
+async function writeRunReport(repoRoot: string, report: RunReport): Promise<string> {
+  const reportsDir = join(repoRoot, ".ai-worktrees", "reports");
+  mkdirSync(reportsDir, { recursive: true });
+  const filename = `run-${report.timestamp.replace(/[:.]/g, "-")}.json`;
+  const filepath = join(reportsDir, filename);
+  writeFileSync(filepath, JSON.stringify(report, null, 2) + "\n");
+  console.log(C.dim(`Run report saved: ${filepath}`));
+  return filepath;
+}
+
 async function cleanup(repo: string, works: Worktree[]) {
   console.log(C.gray("Cleaning up worktrees…"));
   for (const w of works) {
@@ -1779,6 +1893,8 @@ async function main() {
 
   const runtime = await prepareRuntime(opts);
   opts = { ...opts, autoPR: runtime.autoPR };
+
+  const runStartTime = Date.now();
 
   banner("🤘 GitGang - The gang's all here to code!", C.blue);
   console.log(`${C.gray("Repository:")} ${C.cyan(repo)}`);
@@ -1933,7 +2049,22 @@ async function main() {
 
   rl.close();
   dashboard.stop();
-  
+
+  // Generate and persist run report
+  try {
+    const report = generateRunReport(
+      opts,
+      agentResults,
+      agents,
+      finalStatus === "approved" ? "approved" : "dnf",
+      runStartTime,
+      mergeBranch,
+    );
+    await writeRunReport(repo, report);
+  } catch (err) {
+    console.log(C.dim(`Failed to write run report: ${err instanceof Error ? err.message : err}`));
+  }
+
   await cleanup(repo, [wGem, wCla, wCdx]);
 
   if (finalStatus === "approved") {
@@ -1981,6 +2112,7 @@ if (isDirectRun) {
 
 export {
   VERSION,
+  MODELS,
   C,
   TAG,
   line,
@@ -1997,5 +2129,7 @@ export {
   parseStreamLine,
   shouldDisplayLine,
   formatMessage,
+  generateRunReport,
+  writeRunReport,
 };
-export type { AgentId, Opts, ReviewerDecision, AgentRunResult };
+export type { AgentId, Opts, ReviewerDecision, AgentRunResult, RunReport, AgentReport, AgentStats };
