@@ -36,6 +36,8 @@ function makeOpts(overrides: Partial<Opts> = {}): Opts {
     autoPR: false,
     dryRun: false,
     activeAgents: ["gemini", "claude", "codex"],
+    reviewerAgent: "codex",
+    postMergeChecks: [],
     ...overrides,
   };
 }
@@ -218,6 +220,7 @@ describe("writeRunReport", () => {
         },
       ],
       models: { ...MODELS },
+      reviewerAgent: "codex",
     };
 
     const filepath = await writeRunReport(dir, report);
@@ -250,6 +253,7 @@ describe("writeRunReport", () => {
       rounds: 1,
       agents: [],
       models: { ...MODELS },
+      reviewerAgent: "codex",
     };
 
     await writeRunReport(dir, report);

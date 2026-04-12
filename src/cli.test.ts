@@ -9,6 +9,8 @@ import {
   line,
   parseArgs,
   parseAgentsList,
+  parseReviewerAgent,
+  parseDuration,
   parseFirstJson,
   systemConstraints,
   featurePrompt,
@@ -138,6 +140,8 @@ describe("DNF recording", () => {
         autoPR: false,
         dryRun: false,
         activeAgents: ["gemini", "claude", "codex"],
+        reviewerAgent: "codex",
+        postMergeChecks: [],
       },
       "Timeout",
       "details",
@@ -456,5 +460,165 @@ describe("Reviewer prompt with partial agents", () => {
     );
     expect(prompt).toContain("3 files changed");
     expect(prompt).toContain("g-branch");
+  });
+});
+
+describe("Reviewer selection (--reviewer flag)", () => {
+  test("defaults to codex when --reviewer not specified", () => {
+    const parsed = parseArgs(["Some task"]);
+    expect(parsed.reviewerAgent).toBe("codex");
+  });
+
+  test("parses --reviewer claude correctly", () => {
+    const parsed = parseArgs(["--reviewer", "claude", "Some task"]);
+    expect(parsed.reviewerAgent).toBe("claude");
+  });
+
+  test("parses --reviewer gemini correctly", () => {
+    const parsed = parseArgs(["--reviewer", "gemini", "Some task"]);
+    expect(parsed.reviewerAgent).toBe("gemini");
+  });
+
+  test("parses --reviewer codex correctly", () => {
+    const parsed = parseArgs(["--reviewer", "codex", "Some task"]);
+    expect(parsed.reviewerAgent).toBe("codex");
+  });
+
+  test("--reviewer is case-insensitive", () => {
+    const parsed = parseArgs(["--reviewer", "Claude", "Some task"]);
+    expect(parsed.reviewerAgent).toBe("claude");
+  });
+
+  test("parseReviewerAgent throws on invalid agent", () => {
+    expect(() => parseReviewerAgent("invalidagent")).toThrow("Invalid reviewer agent");
+  });
+
+  test("parseReviewerAgent accepts valid agents", () => {
+    expect(parseReviewerAgent("gemini")).toBe("gemini");
+    expect(parseReviewerAgent("claude")).toBe("claude");
+    expect(parseReviewerAgent("codex")).toBe("codex");
+  });
+
+  test("--reviewer missing value throws", () => {
+    expect(() => parseArgs(["--reviewer"])).toThrow("--reviewer requires a value");
+  });
+
+  test("--reviewer works with other flags", () => {
+    const parsed = parseArgs(["--reviewer", "claude", "--agents", "gemini,claude", "--rounds", "2", "Build it"]);
+    expect(parsed.reviewerAgent).toBe("claude");
+    expect(parsed.activeAgents).toEqual(["gemini", "claude"]);
+    expect(parsed.rounds).toBe(2);
+    expect(parsed.task).toBe("Build it");
+  });
+
+  test("--reviewer can differ from active agents", () => {
+    const parsed = parseArgs(["--reviewer", "claude", "--agents", "gemini,codex", "Task"]);
+    expect(parsed.reviewerAgent).toBe("claude");
+    expect(parsed.activeAgents).toEqual(["gemini", "codex"]);
+  });
+});
+
+describe("Duration parsing (parseDuration)", () => {
+  test("parses minutes", () => {
+    expect(parseDuration("25m")).toBe(25 * 60 * 1000);
+  });
+
+  test("parses hours", () => {
+    expect(parseDuration("1h")).toBe(60 * 60 * 1000);
+  });
+
+  test("parses seconds", () => {
+    expect(parseDuration("90s")).toBe(90 * 1000);
+  });
+
+  test("parses combined hours + minutes", () => {
+    expect(parseDuration("1h30m")).toBe(90 * 60 * 1000);
+  });
+
+  test("parses combined hours + minutes + seconds", () => {
+    expect(parseDuration("2h15m30s")).toBe((2 * 3600 + 15 * 60 + 30) * 1000);
+  });
+
+  test("parses raw milliseconds as number string", () => {
+    expect(parseDuration("1500000")).toBe(1500000);
+  });
+
+  test("returns undefined for invalid input", () => {
+    expect(parseDuration("abc")).toBeUndefined();
+    expect(parseDuration("")).toBeUndefined();
+    expect(parseDuration("25x")).toBeUndefined();
+  });
+
+  test("trims whitespace", () => {
+    expect(parseDuration("  25m  ")).toBe(25 * 60 * 1000);
+  });
+
+  test("is case insensitive", () => {
+    expect(parseDuration("1H30M")).toBe(90 * 60 * 1000);
+  });
+});
+
+describe("--timeout flag (human-friendly durations)", () => {
+  test("parses --timeout 25m", () => {
+    const parsed = parseArgs(["--timeout", "25m", "Task"]);
+    expect(parsed.timeoutMs).toBe(25 * 60 * 1000);
+  });
+
+  test("parses --timeout 1h", () => {
+    const parsed = parseArgs(["--timeout", "1h", "Task"]);
+    // Capped to 60 minutes max by normalization
+    expect(parsed.timeoutMs).toBe(60 * 60 * 1000);
+  });
+
+  test("parses --timeout 90s (clamped to minimum 60s)", () => {
+    const parsed = parseArgs(["--timeout", "90s", "Task"]);
+    expect(parsed.timeoutMs).toBe(90 * 1000);
+  });
+
+  test("--timeout with invalid value throws", () => {
+    expect(() => parseArgs(["--timeout", "abc", "Task"])).toThrow("Invalid duration");
+  });
+
+  test("--timeout missing value throws", () => {
+    expect(() => parseArgs(["--timeout"])).toThrow("--timeout requires a value");
+  });
+
+  test("--timeout overrides default timeoutMs", () => {
+    const parsed = parseArgs(["--timeout", "10m", "Task"]);
+    expect(parsed.timeoutMs).toBe(10 * 60 * 1000);
+  });
+
+  test("--timeoutMs still works for backward compat", () => {
+    const parsed = parseArgs(["--timeoutMs", "600000", "Task"]);
+    expect(parsed.timeoutMs).toBe(600000);
+  });
+});
+
+describe("--check flag (post-merge checks)", () => {
+  test("defaults to empty array", () => {
+    const parsed = parseArgs(["Task"]);
+    expect(parsed.postMergeChecks).toEqual([]);
+  });
+
+  test("parses single --check", () => {
+    const parsed = parseArgs(["--check", "npm test", "Task"]);
+    expect(parsed.postMergeChecks).toEqual(["npm test"]);
+  });
+
+  test("parses multiple --check flags", () => {
+    const parsed = parseArgs(["--check", "npm test", "--check", "npm run build", "Task"]);
+    expect(parsed.postMergeChecks).toEqual(["npm test", "npm run build"]);
+  });
+
+  test("--check works with other flags", () => {
+    const parsed = parseArgs(["--check", "npm test", "--rounds", "2", "--dry-run", "Task"]);
+    expect(parsed.postMergeChecks).toEqual(["npm test"]);
+    expect(parsed.rounds).toBe(2);
+    expect(parsed.dryRun).toBe(true);
+    expect(parsed.task).toBe("Task");
+  });
+
+  test("--check missing value throws", () => {
+    expect(() => parseArgs(["--check"])).toThrow("--check requires a command");
   });
 });

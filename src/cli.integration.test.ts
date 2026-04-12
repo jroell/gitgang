@@ -54,6 +54,8 @@ describe("applyMergePlan integration", () => {
       autoPR: false,
       dryRun: false,
       activeAgents: ["gemini", "claude", "codex"],
+      reviewerAgent: "codex",
+      postMergeChecks: [],
     };
   }
 
@@ -281,6 +283,8 @@ describe("applyMergePlan with partial agents", () => {
       autoPR: false,
       dryRun: false,
       activeAgents: ["gemini", "claude"],
+      reviewerAgent: "codex",
+      postMergeChecks: [],
     };
 
     const decision: ReviewerDecision = {
@@ -314,6 +318,8 @@ describe("applyMergePlan with partial agents", () => {
       autoPR: false,
       dryRun: false,
       activeAgents: ["gemini"],
+      reviewerAgent: "codex",
+      postMergeChecks: [],
     };
 
     const decision: ReviewerDecision = {

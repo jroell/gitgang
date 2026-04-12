@@ -21,7 +21,7 @@ import chalk from "chalk";
 import ora from "ora";
 import { renderSidebar } from "./sidebar.js";
 
-const VERSION = "1.4.25";
+const VERSION = "1.5.0";
 const REQUIRED_BINARIES = ["git", "gemini", "claude", "codex"] as const;
 const DEFAULT_AGENT_IDLE_TIMEOUT_MS = Number(
   process.env.GITGANG_AGENT_IDLE_TIMEOUT ?? 7 * 60 * 1000,
@@ -66,6 +66,8 @@ interface Opts {
   autoPR: boolean;
   dryRun: boolean;
   activeAgents: AgentId[];
+  reviewerAgent: AgentId;
+  postMergeChecks: string[];
 }
 
 interface Worktree {
@@ -657,6 +659,7 @@ async function runCodexCoder(
 interface ReviewerSpawnConfig {
   args: string[];
   options: SpawnOptions;
+  command?: string;
 }
 
 export function reviewerSpawnConfig(
@@ -668,27 +671,51 @@ export function reviewerSpawnConfig(
   statusSummary?: string,
   diffSummaries?: Partial<Record<AgentId, string>>,
   successfulAgents?: AgentId[],
+  reviewerAgent: AgentId = "codex",
 ): ReviewerSpawnConfig {
   const prompt = reviewerPromptJSON(base, branches, task, statusSummary, diffSummaries, successfulAgents);
-  const args = [
-    "exec",
-    prompt,
-    "--model",
-    MODELS.codex,
-    "--config",
-    'model_reasoning_effort="xhigh"',
-  ];
-  args.push(yolo ? "--yolo" : "--full-auto");
   const options: Parameters<typeof spawn>[1] = {
     cwd,
     stdout: "pipe",
     stderr: "pipe",
     stdin: "pipe",
   };
-  return { args, options };
+
+  switch (reviewerAgent) {
+    case "claude": {
+      // Write prompt to temp file to pipe into claude
+      const promptFile = join(cwd, ".ai-worktrees", "reviewer-prompt.txt");
+      mkdirSync(join(cwd, ".ai-worktrees"), { recursive: true });
+      writeFileSync(promptFile, prompt);
+      const bashCmd = `cat "${promptFile}" | claude --print --model ${MODELS.claude} --output-format stream-json --verbose${yolo ? " --dangerously-skip-permissions" : ""}`;
+      return { args: ["-c", bashCmd], options: { ...options, shell: false }, command: "bash" };
+    }
+    case "gemini": {
+      const promptFile = join(cwd, ".ai-worktrees", "reviewer-prompt.txt");
+      mkdirSync(join(cwd, ".ai-worktrees"), { recursive: true });
+      writeFileSync(promptFile, prompt);
+      const geminiArgs = [`-m`, MODELS.gemini, `--output-format`, `stream-json`];
+      if (yolo) geminiArgs.push("--yolo");
+      const bashCmd = `cat "${promptFile}" | gemini ${geminiArgs.join(" ")}`;
+      return { args: ["-c", bashCmd], options: { ...options, shell: false }, command: "bash" };
+    }
+    case "codex":
+    default: {
+      const args = [
+        "exec",
+        prompt,
+        "--model",
+        MODELS.codex,
+        "--config",
+        'model_reasoning_effort="xhigh"',
+      ];
+      args.push(yolo ? "--yolo" : "--full-auto");
+      return { args, options, command: "codex" };
+    }
+  }
 }
 
-async function runCodexReviewer(
+async function runReviewer(
   cwd: string,
   base: string,
   branches: Partial<Record<AgentId, string>>,
@@ -697,9 +724,10 @@ async function runCodexReviewer(
   statusSummary?: string,
   diffSummaries?: Partial<Record<AgentId, string>>,
   successfulAgents?: AgentId[],
+  reviewerAgent: AgentId = "codex",
 ) {
-  const { args, options } = reviewerSpawnConfig(cwd, base, branches, task, yolo, statusSummary, diffSummaries, successfulAgents);
-  return spawnProcess(["codex", ...args], options);
+  const { args, options, command } = reviewerSpawnConfig(cwd, base, branches, task, yolo, statusSummary, diffSummaries, successfulAgents, reviewerAgent);
+  return spawnProcess([command || "codex", ...args], options);
 }
 
 function parseFirstJson(s: string) {
@@ -764,6 +792,37 @@ function parseAgentsList(value: string): AgentId[] {
   return [...new Set(valid)]; // deduplicate
 }
 
+function parseReviewerAgent(value: string): AgentId {
+  const id = value.trim().toLowerCase();
+  if (AGENT_IDS.includes(id as AgentId)) {
+    return id as AgentId;
+  }
+  throw new Error(`Invalid reviewer agent "${value}". Valid options: ${AGENT_IDS.join(", ")}`);
+}
+
+/**
+ * Parse a human-friendly duration string into milliseconds.
+ * Supports: "25m", "1h", "90s", "1h30m", "2h15m30s", "1500000" (raw ms).
+ * Returns undefined if the string cannot be parsed.
+ */
+function parseDuration(value: string): number | undefined {
+  const trimmed = value.trim();
+
+  // Pure numeric → treat as milliseconds for backward compat
+  if (/^\d+$/.test(trimmed)) {
+    return Number(trimmed);
+  }
+
+  const pattern = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/i;
+  const match = trimmed.match(pattern);
+  if (!match || (!match[1] && !match[2] && !match[3])) return undefined;
+
+  const hours = Number(match[1] || 0);
+  const minutes = Number(match[2] || 0);
+  const seconds = Number(match[3] || 0);
+  return (hours * 3600 + minutes * 60 + seconds) * 1000;
+}
+
 function parseArgs(raw: string[]) {
   let task: string | undefined;
   let rounds = 3;
@@ -773,6 +832,8 @@ function parseArgs(raw: string[]) {
   let autoPR = true;
   let dryRun = false;
   let activeAgents: AgentId[] = [...AGENT_IDS];
+  let reviewerAgent: AgentId = "codex";
+  let postMergeChecks: string[] = [];
 
   const bool = (v?: string) =>
     ["1", "true", "yes", "on"].includes((v || "").toLowerCase());
@@ -806,6 +867,13 @@ function parseArgs(raw: string[]) {
         if (i + 1 >= raw.length) throw new Error("--timeoutMs requires a value");
         timeoutMs = Number(raw[++i]);
         break;
+      case "--timeout": {
+        if (i + 1 >= raw.length) throw new Error("--timeout requires a value (e.g. 25m, 1h, 90s, 1h30m)");
+        const parsed = parseDuration(raw[++i]);
+        if (parsed === undefined) throw new Error(`Invalid duration "${raw[i]}". Use formats like 25m, 1h, 90s, 1h30m`);
+        timeoutMs = parsed;
+        break;
+      }
       case "--no-pr":
         autoPR = false;
         break;
@@ -816,6 +884,14 @@ function parseArgs(raw: string[]) {
         if (i + 1 >= raw.length) throw new Error("--agents requires a value (e.g. gemini,claude,codex)");
         activeAgents = parseAgentsList(raw[++i]);
         break;
+      case "--reviewer":
+        if (i + 1 >= raw.length) throw new Error("--reviewer requires a value (gemini, claude, or codex)");
+        reviewerAgent = parseReviewerAgent(raw[++i]);
+        break;
+      case "--check":
+        if (i + 1 >= raw.length) throw new Error("--check requires a command string");
+        postMergeChecks.push(raw[++i]);
+        break;
       default:
         if (!token.startsWith("-") && task === undefined) {
           task = token;
@@ -824,7 +900,7 @@ function parseArgs(raw: string[]) {
     }
   }
 
-  return normalizeParsedArgs({ task, rounds, yolo, workRoot, timeoutMs, autoPR, dryRun, activeAgents });
+  return normalizeParsedArgs({ task, rounds, yolo, workRoot, timeoutMs, autoPR, dryRun, activeAgents, reviewerAgent, postMergeChecks });
 }
 
 interface ParsedArgs {
@@ -836,6 +912,8 @@ interface ParsedArgs {
   autoPR: boolean;
   dryRun: boolean;
   activeAgents: AgentId[];
+  reviewerAgent: AgentId;
+  postMergeChecks: string[];
 }
 
 export function normalizeParsedArgs(parsed: ParsedArgs): ParsedArgs {
@@ -872,6 +950,8 @@ export function normalizeParsedArgs(parsed: ParsedArgs): ParsedArgs {
     autoPR: parsed.autoPR,
     dryRun: parsed.dryRun ?? false,
     activeAgents: parsed.activeAgents?.length ? parsed.activeAgents : [...AGENT_IDS],
+    reviewerAgent: parsed.reviewerAgent ?? "codex",
+    postMergeChecks: parsed.postMergeChecks ?? [],
   };
 }
 
@@ -1617,7 +1697,9 @@ async function applyMergePlan(
   const checks =
     decision.mergePlan?.postMergeChecks && decision.mergePlan.postMergeChecks.length
       ? decision.mergePlan.postMergeChecks
-      : DEFAULT_POST_MERGE_CHECKS;
+      : opts.postMergeChecks.length
+        ? opts.postMergeChecks
+        : DEFAULT_POST_MERGE_CHECKS;
 
   for (const check of checks) {
     const exitCode = await runPostMergeCheckWithRetries(check, opts.repoRoot);
@@ -1706,7 +1788,7 @@ async function doReview(
 
     const diffSummaries = await collectDiffSummaries(opts.repoRoot, opts.baseBranch, branches);
 
-    const proc = await runCodexReviewer(
+    const proc = await runReviewer(
       opts.repoRoot,
       opts.baseBranch,
       branches,
@@ -1715,6 +1797,7 @@ async function doReview(
       statusSummary,
       diffSummaries,
       successfulAgentIds,
+      opts.reviewerAgent,
     );
 
     console.log(C.gray(`Reviewer process started, waiting for response (timeout: ${REVIEWER_TIMEOUT_MS / 1000}s)...`));
@@ -1845,6 +1928,7 @@ interface RunReport {
   rounds: number;
   agents: AgentReport[];
   models: Record<AgentId, string>;
+  reviewerAgent: AgentId;
 }
 
 function generateRunReport(
@@ -1878,6 +1962,7 @@ function generateRunReport(
     rounds: opts.rounds,
     agents: agentReports,
     models: { ...MODELS },
+    reviewerAgent: opts.reviewerAgent,
   };
 }
 
@@ -1910,10 +1995,10 @@ function printHelp() {
 Usage
   gg "Do this task"
   gitgang "Do this task"
-  gitgang --task "Do this task" [--rounds N] [--no-yolo] [--workRoot PATH] [--timeoutMs MS] [--no-pr] [--dry-run] [--agents gemini,claude,codex]
+  gitgang --task "Do this task" [--rounds N] [--no-yolo] [--workRoot PATH] [--timeout 25m] [--no-pr] [--dry-run] [--agents gemini,claude,codex] [--reviewer codex] [--check "npm test"]
 
 Defaults
-  rounds=3, yolo=true, workRoot=.ai-worktrees, timeoutMs=1500000 (25m), agents=gemini,claude,codex
+  rounds=3, yolo=true, workRoot=.ai-worktrees, timeout=25m, agents=gemini,claude,codex, reviewer=codex
 
 Environment Variables
   GITGANG_GEMINI_MODEL  Override Gemini model (default: ${DEFAULT_MODELS.gemini})
@@ -1938,7 +2023,7 @@ async function main() {
     return;
   }
 
-  let { task, rounds, yolo, workRoot, timeoutMs, autoPR, dryRun, activeAgents } = parseArgs(argv);
+  let { task, rounds, yolo, workRoot, timeoutMs, autoPR, dryRun, activeAgents, reviewerAgent, postMergeChecks } = parseArgs(argv);
   if (!task) {
     printHelp();
     process.exit(1);
@@ -1959,6 +2044,8 @@ async function main() {
     autoPR,
     dryRun,
     activeAgents,
+    reviewerAgent,
+    postMergeChecks,
   };
 
   const runtime = await prepareRuntime(opts);
@@ -1974,6 +2061,10 @@ async function main() {
     `${C.gray("Rounds:")} ${rounds}  ${C.gray("Auto-merge:")} ${yolo}  ${C.gray("Auto-PR:")} ${opts.autoPR}`,
   );
   console.log(`${C.gray("Agents:")} ${activeAgents.join(", ")}`);
+  console.log(`${C.gray("Reviewer:")} ${TAG(reviewerAgent)} ${C.cyan(MODELS[reviewerAgent])}`);
+  if (postMergeChecks.length) {
+    console.log(`${C.gray("Post-merge checks:")} ${postMergeChecks.join(", ")}`);
+  }
   console.log(`${C.gray("Models:")}`);
   for (const id of activeAgents) {
     const isOverride = MODELS[id] !== DEFAULT_MODELS[id];
@@ -2114,7 +2205,7 @@ async function main() {
       .join("; ");
     await recordDNF(opts, dnfReason, dnfDetails);
   } else {
-    banner("Reviewer loop (Codex)", C.magenta);
+    banner(`Reviewer loop (${reviewerAgent.charAt(0).toUpperCase() + reviewerAgent.slice(1)})`, C.magenta);
     if (successfulAgentIds.length < activeAgents.length) {
       console.log(C.yellow(`Reviewing with ${successfulAgentIds.length}/${activeAgents.length} successful agents: ${successfulAgentIds.join(", ")}`));
     }
@@ -2222,6 +2313,8 @@ export {
   banner,
   parseArgs,
   parseAgentsList,
+  parseReviewerAgent,
+  parseDuration,
   parseFirstJson,
   systemConstraints,
   featurePrompt,

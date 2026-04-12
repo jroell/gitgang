@@ -128,6 +128,10 @@ export function renderHelloWorldSidebar(
     repoRoot: ".",
     baseBranch: "master",
     autoPR: false,
+    dryRun: false,
+    activeAgents: ["codex"],
+    reviewerAgent: "codex",
+    postMergeChecks: [],
   };
 
   return renderSidebar(agents, opts, {
