@@ -34,6 +34,8 @@ function makeOpts(overrides: Partial<Opts> = {}): Opts {
     timeoutMs: 25 * 60 * 1000,
     yolo: true,
     autoPR: false,
+    dryRun: false,
+    activeAgents: ["gemini", "claude", "codex"],
     ...overrides,
   };
 }

@@ -21,7 +21,7 @@ import chalk from "chalk";
 import ora from "ora";
 import { renderSidebar } from "./sidebar.js";
 
-const VERSION = "1.4.23";
+const VERSION = "1.4.25";
 const REQUIRED_BINARIES = ["git", "gemini", "claude", "codex"] as const;
 const DEFAULT_AGENT_IDLE_TIMEOUT_MS = Number(
   process.env.GITGANG_AGENT_IDLE_TIMEOUT ?? 7 * 60 * 1000,
@@ -35,7 +35,7 @@ const ROUND_COMPLETION_TIMEOUT_MS = 15 * 60 * 1000; // Force reviewer after 15 m
 const POST_TIMEOUT_GRACE_MS = 3 * 1000; // Allow short grace after round timeout for just-landing results
 const MAX_AGENT_BACKOFF_MS = 2 * 60 * 1000;
 const REVIEWER_MAX_RETRIES = 3;
-const REVIEWER_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes timeout for reviewer process
+const REVIEWER_TIMEOUT_MS = Number(process.env.GITGANG_REVIEWER_TIMEOUT_MS ?? 15 * 60 * 1000); // 15 minutes default, override via env
 const DEFAULT_POST_MERGE_CHECKS: string[] = [];
 const GLOBAL_TIMEOUT_GRACE_MS = 15_000;
 
@@ -64,6 +64,8 @@ interface Opts {
   timeoutMs: number;
   yolo: boolean;
   autoPR: boolean;
+  dryRun: boolean;
+  activeAgents: AgentId[];
 }
 
 interface Worktree {
@@ -127,11 +129,25 @@ interface ReviewerDecision {
   revisions?: Array<{ agent: AgentId; instructions: string }>;
 }
 
-const MODELS = {
+const DEFAULT_MODELS: Record<AgentId, string> = {
   gemini: "gemini-3-1-pro",
   claude: "claude-opus-4-6",
   codex: "gpt-5.4",
-} as const;
+};
+
+/**
+ * Resolve the model for each agent, allowing overrides via environment
+ * variables: GITGANG_GEMINI_MODEL, GITGANG_CLAUDE_MODEL, GITGANG_CODEX_MODEL.
+ */
+function resolveModels(): Record<AgentId, string> {
+  return {
+    gemini: process.env.GITGANG_GEMINI_MODEL || DEFAULT_MODELS.gemini,
+    claude: process.env.GITGANG_CLAUDE_MODEL || DEFAULT_MODELS.claude,
+    codex: process.env.GITGANG_CODEX_MODEL || DEFAULT_MODELS.codex,
+  };
+}
+
+const MODELS: Record<AgentId, string> = resolveModels();
 
 const C = {
   b: (s: string) => chalk.bold(s),
@@ -319,34 +335,45 @@ Rules:
 
 function reviewerPromptJSON(
   base: string,
-  branches: { gemini: string; claude: string; codex: string },
+  branches: Partial<Record<AgentId, string>>,
   task: string,
   statusSummary?: string,
   diffSummaries?: Partial<Record<AgentId, string>>,
+  successfulAgents?: AgentId[],
 ) {
+  // Only include branches from agents that actually ran
+  const activeBranches = AGENT_IDS.filter((id) => branches[id]);
+  const branchList = activeBranches
+    .map((id) => `- ${branches[id]}${successfulAgents && !successfulAgents.includes(id) ? " (FAILED - do not merge)" : ""}`)
+    .join("\n");
+
   const diffSection = diffSummaries
-    ? `\nDiff summaries vs ${base}:\n${(["gemini", "claude", "codex"] as AgentId[])
-        .map((id) => `--- ${id} ---\n${diffSummaries[id] ?? "(no data)"}`)
+    ? `\nDiff summaries vs ${base}:\n${activeBranches
+        .map((id) => `--- ${id}${successfulAgents && !successfulAgents.includes(id) ? " (FAILED)" : ""} ---\n${diffSummaries[id] ?? "(no data)"}`)
         .join("\n\n")}\n`
     : "";
 
+  const failedNote = successfulAgents && successfulAgents.length < activeBranches.length
+    ? `\nIMPORTANT: Only these agents completed successfully: ${successfulAgents.join(", ")}. Only include their branches in your merge plan. Do NOT include failed agents' branches.\n`
+    : "";
+
+  const agentList = activeBranches.map((id) => `"${id}"`).join(" | ");
+
   return `You are the final reviewer. Compare these branches against ${base}:
-- ${branches.gemini}
-- ${branches.claude}
-- ${branches.codex}
+${branchList}
 
 Task: ${task}
 
-Goal: Pick the best parts from each and integrate into a new merge branch off ${base}. If none are satisfactory, produce concrete fix instructions per agent and keep the loop going.
-
+Goal: Pick the best parts from each successful agent and integrate into a new merge branch off ${base}. If none are satisfactory, produce concrete fix instructions per agent and keep the loop going.
+${failedNote}
 Status summary:
-${statusSummary || "- gemini: pending\n- claude: pending\n- codex: pending"}
+${statusSummary || activeBranches.map((id) => `- ${id}: pending`).join("\n")}
 ${diffSection}
 Output JSON only with this schema:
 {
   "status": "approve" | "revise",
   "mergePlan": { "order": ["branchName", ...], "notes": "why this order", "postMergeChecks": ["command", ...] },
-  "revisions": [{ "agent": "gemini" | "claude" | "codex", "instructions": "actionable steps" }]
+  "revisions": [{ "agent": ${agentList}, "instructions": "actionable steps" }]
 }`;
 }
 
@@ -635,13 +662,14 @@ interface ReviewerSpawnConfig {
 export function reviewerSpawnConfig(
   cwd: string,
   base: string,
-  branches: { gemini: string; claude: string; codex: string },
+  branches: Partial<Record<AgentId, string>>,
   task: string,
   yolo: boolean,
   statusSummary?: string,
   diffSummaries?: Partial<Record<AgentId, string>>,
+  successfulAgents?: AgentId[],
 ): ReviewerSpawnConfig {
-  const prompt = reviewerPromptJSON(base, branches, task, statusSummary, diffSummaries);
+  const prompt = reviewerPromptJSON(base, branches, task, statusSummary, diffSummaries, successfulAgents);
   const args = [
     "exec",
     prompt,
@@ -663,13 +691,14 @@ export function reviewerSpawnConfig(
 async function runCodexReviewer(
   cwd: string,
   base: string,
-  branches: { gemini: string; claude: string; codex: string },
+  branches: Partial<Record<AgentId, string>>,
   task: string,
   yolo: boolean,
   statusSummary?: string,
   diffSummaries?: Partial<Record<AgentId, string>>,
+  successfulAgents?: AgentId[],
 ) {
-  const { args, options } = reviewerSpawnConfig(cwd, base, branches, task, yolo, statusSummary, diffSummaries);
+  const { args, options } = reviewerSpawnConfig(cwd, base, branches, task, yolo, statusSummary, diffSummaries, successfulAgents);
   return spawnProcess(["codex", ...args], options);
 }
 
@@ -719,6 +748,22 @@ async function prepareRuntime(opts: Opts) {
   return { autoPR: depResult.autoPR };
 }
 
+function parseAgentsList(value: string): AgentId[] {
+  const ids = value.split(",").map((s) => s.trim().toLowerCase());
+  const valid: AgentId[] = [];
+  for (const id of ids) {
+    if (AGENT_IDS.includes(id as AgentId)) {
+      valid.push(id as AgentId);
+    } else {
+      console.error(C.yellow(`Warning: unknown agent "${id}" — valid agents: ${AGENT_IDS.join(", ")}`));
+    }
+  }
+  if (!valid.length) {
+    throw new Error(`No valid agents specified. Valid agents: ${AGENT_IDS.join(", ")}`);
+  }
+  return [...new Set(valid)]; // deduplicate
+}
+
 function parseArgs(raw: string[]) {
   let task: string | undefined;
   let rounds = 3;
@@ -726,6 +771,8 @@ function parseArgs(raw: string[]) {
   let workRoot = ".ai-worktrees";
   let timeoutMs = 25 * 60 * 1000;
   let autoPR = true;
+  let dryRun = false;
+  let activeAgents: AgentId[] = [...AGENT_IDS];
 
   const bool = (v?: string) =>
     ["1", "true", "yes", "on"].includes((v || "").toLowerCase());
@@ -762,6 +809,13 @@ function parseArgs(raw: string[]) {
       case "--no-pr":
         autoPR = false;
         break;
+      case "--dry-run":
+        dryRun = true;
+        break;
+      case "--agents":
+        if (i + 1 >= raw.length) throw new Error("--agents requires a value (e.g. gemini,claude,codex)");
+        activeAgents = parseAgentsList(raw[++i]);
+        break;
       default:
         if (!token.startsWith("-") && task === undefined) {
           task = token;
@@ -770,7 +824,7 @@ function parseArgs(raw: string[]) {
     }
   }
 
-  return normalizeParsedArgs({ task, rounds, yolo, workRoot, timeoutMs, autoPR });
+  return normalizeParsedArgs({ task, rounds, yolo, workRoot, timeoutMs, autoPR, dryRun, activeAgents });
 }
 
 interface ParsedArgs {
@@ -780,6 +834,8 @@ interface ParsedArgs {
   workRoot: string;
   timeoutMs: number;
   autoPR: boolean;
+  dryRun: boolean;
+  activeAgents: AgentId[];
 }
 
 export function normalizeParsedArgs(parsed: ParsedArgs): ParsedArgs {
@@ -814,6 +870,8 @@ export function normalizeParsedArgs(parsed: ParsedArgs): ParsedArgs {
     workRoot,
     timeoutMs,
     autoPR: parsed.autoPR,
+    dryRun: parsed.dryRun ?? false,
+    activeAgents: parsed.activeAgents?.length ? parsed.activeAgents : [...AGENT_IDS],
   };
 }
 
@@ -1509,7 +1567,7 @@ export async function runPostMergeCheckWithRetries(cmd: string, repo: string) {
 
 async function applyMergePlan(
   opts: Opts,
-  worktrees: Record<AgentId, Worktree>,
+  worktrees: Partial<Record<AgentId, Worktree>>,
   decision: ReviewerDecision,
 ) {
   const mergeBranch = `ai-merge-${ts()}`;
@@ -1524,10 +1582,15 @@ async function applyMergePlan(
     };
   }
 
+  // Build default order from available worktrees only
+  const availableBranches = opts.activeAgents
+    .filter((id) => worktrees[id])
+    .map((id) => worktrees[id]!.branch);
+
   const order =
     decision.mergePlan?.order && decision.mergePlan.order.length
       ? decision.mergePlan.order
-      : [worktrees.gemini.branch, worktrees.claude.branch, worktrees.codex.branch];
+      : availableBranches;
 
   for (const branch of order) {
     try {
@@ -1620,8 +1683,9 @@ export function buildStatusSummary(agents: Record<AgentId, AgentStatusSource>) {
 
 async function doReview(
   opts: Opts,
-  agents: Record<AgentId, AgentRunner>,
+  agents: Partial<Record<AgentId, AgentRunner>>,
   statusSummary: string,
+  successfulAgentIds?: AgentId[],
 ): Promise<
   | { status: "approved"; mergeBranch: string }
   | { status: "revisions" }
@@ -1631,27 +1695,26 @@ async function doReview(
 
   let lastError: string | undefined;
 
+  // Build branches map from available agents only
+  const branches: Partial<Record<AgentId, string>> = {};
+  for (const id of opts.activeAgents) {
+    if (agents[id]) branches[id] = agents[id]!.worktree.branch;
+  }
+
   for (let attempt = 1; attempt <= REVIEWER_MAX_RETRIES; attempt++) {
     console.log(C.gray(`Starting reviewer attempt ${attempt}/${REVIEWER_MAX_RETRIES}...`));
 
-    const diffSummaries = await collectDiffSummaries(opts.repoRoot, opts.baseBranch, {
-      gemini: agents.gemini.worktree.branch,
-      claude: agents.claude.worktree.branch,
-      codex: agents.codex.worktree.branch,
-    });
+    const diffSummaries = await collectDiffSummaries(opts.repoRoot, opts.baseBranch, branches);
 
     const proc = await runCodexReviewer(
       opts.repoRoot,
       opts.baseBranch,
-      {
-        gemini: agents.gemini.worktree.branch,
-        claude: agents.claude.worktree.branch,
-        codex: agents.codex.worktree.branch,
-      },
+      branches,
       opts.task,
       opts.yolo,
       statusSummary,
       diffSummaries,
+      successfulAgentIds,
     );
 
     console.log(C.gray(`Reviewer process started, waiting for response (timeout: ${REVIEWER_TIMEOUT_MS / 1000}s)...`));
@@ -1710,11 +1773,11 @@ async function doReview(
     console.log(C.gray(`Reviewer decision: ${decision.status}`));
 
     if (decision.status === "approve") {
-      const mergeResult = await applyMergePlan(opts, {
-        gemini: agents.gemini.worktree,
-        claude: agents.claude.worktree,
-        codex: agents.codex.worktree,
-      }, decision);
+      const worktrees: Partial<Record<AgentId, Worktree>> = {};
+      for (const id of opts.activeAgents) {
+        if (agents[id]) worktrees[id] = agents[id]!.worktree;
+      }
+      const mergeResult = await applyMergePlan(opts, worktrees, decision);
       if (!mergeResult.ok) {
         return {
           status: "dnf",
@@ -1847,10 +1910,15 @@ function printHelp() {
 Usage
   gg "Do this task"
   gitgang "Do this task"
-  gitgang --task "Do this task" [--rounds N] [--no-yolo] [--workRoot PATH] [--timeoutMs MS] [--no-pr]
+  gitgang --task "Do this task" [--rounds N] [--no-yolo] [--workRoot PATH] [--timeoutMs MS] [--no-pr] [--dry-run] [--agents gemini,claude,codex]
 
 Defaults
-  rounds=3, yolo=true, workRoot=.ai-worktrees, timeoutMs=1500000 (25m)
+  rounds=3, yolo=true, workRoot=.ai-worktrees, timeoutMs=1500000 (25m), agents=gemini,claude,codex
+
+Environment Variables
+  GITGANG_GEMINI_MODEL  Override Gemini model (default: ${DEFAULT_MODELS.gemini})
+  GITGANG_CLAUDE_MODEL  Override Claude model (default: ${DEFAULT_MODELS.claude})
+  GITGANG_CODEX_MODEL   Override Codex model  (default: ${DEFAULT_MODELS.codex})
 
 While running
   /status  /agents  /logs <agent>  /nudge <agent> <msg>  /kill <agent>  /help
@@ -1870,7 +1938,7 @@ async function main() {
     return;
   }
 
-  let { task, rounds, yolo, workRoot, timeoutMs, autoPR } = parseArgs(argv);
+  let { task, rounds, yolo, workRoot, timeoutMs, autoPR, dryRun, activeAgents } = parseArgs(argv);
   if (!task) {
     printHelp();
     process.exit(1);
@@ -1889,6 +1957,8 @@ async function main() {
     timeoutMs,
     yolo,
     autoPR,
+    dryRun,
+    activeAgents,
   };
 
   const runtime = await prepareRuntime(opts);
@@ -1903,35 +1973,58 @@ async function main() {
   console.log(
     `${C.gray("Rounds:")} ${rounds}  ${C.gray("Auto-merge:")} ${yolo}  ${C.gray("Auto-PR:")} ${opts.autoPR}`,
   );
+  console.log(`${C.gray("Agents:")} ${activeAgents.join(", ")}`);
+  console.log(`${C.gray("Models:")}`);
+  for (const id of activeAgents) {
+    const isOverride = MODELS[id] !== DEFAULT_MODELS[id];
+    const suffix = isOverride ? C.yellow(" (override)") : "";
+    console.log(`  ${TAG(id)} ${C.cyan(MODELS[id])}${suffix}`);
+  }
+
+  if (dryRun) {
+    banner("Dry Run — no agents launched", C.yellow);
+    console.log(C.gray("Configuration validated. Exiting without running agents."));
+    return;
+  }
+
   console.log(
     C.dim("Type /help or @agent/@all <msg> for interactive controls while agents run."),
   );
+  if (activeAgents.length < AGENT_IDS.length) {
+    const skipped = AGENT_IDS.filter((id) => !activeAgents.includes(id));
+    console.log(C.yellow(`Skipping agents: ${skipped.join(", ")}`));
+  }
 
   mkdirSync(resolve(repo, workRoot), { recursive: true });
-  const wGem = await createWorktree(repo, base, "gemini", workRoot);
-  const wCla = await createWorktree(repo, base, "claude", workRoot);
-  const wCdx = await createWorktree(repo, base, "codex", workRoot);
 
-  const agents: Record<AgentId, AgentRunner> = {
-    gemini: new AgentRunner("gemini", wGem, base, opts),
-    claude: new AgentRunner("claude", wCla, base, opts),
-    codex: new AgentRunner("codex", wCdx, base, opts),
-  };
+  // Only create worktrees for active agents
+  const worktreeMap: Partial<Record<AgentId, Worktree>> = {};
+  for (const id of activeAgents) {
+    worktreeMap[id] = await createWorktree(repo, base, id, workRoot);
+  }
 
-  const dashboard = startDashboardTicker({ agents, opts });
+  const agents: Partial<Record<AgentId, AgentRunner>> = {};
+  for (const id of activeAgents) {
+    agents[id] = new AgentRunner(id, worktreeMap[id]!, base, opts);
+  }
+
+  // Dashboard and command palette need a full record for rendering;
+  // provide stubs for inactive agents.
+  const agentsForDashboard = agents as Record<AgentId, AgentRunner>;
+  const dashboard = startDashboardTicker({ agents: agentsForDashboard, opts });
   const rl = startCommandPalette({
-    agents,
+    agents: agentsForDashboard,
     opts,
     refreshDashboard: dashboard.refresh,
   });
 
   banner("🚀 Starting AI Agents", C.green);
-  console.log(`${TAG("gemini")} → ${C.dim(wGem.branch)}`);
-  console.log(`${TAG("claude")} → ${C.dim(wCla.branch)}`);
-  console.log(`${TAG("codex")} → ${C.dim(wCdx.branch)}`);
+  for (const id of activeAgents) {
+    console.log(`${TAG(id)} → ${C.dim(worktreeMap[id]!.branch)}`);
+  }
   console.log("");
 
-  const agentEntries = Object.entries(agents) as Array<[AgentId, AgentRunner]>;
+  const agentEntries = activeAgents.map((id) => [id, agents[id]!] as [AgentId, AgentRunner]);
   const completionMap = new Map<AgentId, AgentRunResult>();
   const agentPromises = agentEntries.map(([id, runner]) =>
     runner.run(task).then((result) => {
@@ -2011,6 +2104,8 @@ async function main() {
     }
   }
 
+  const successfulAgentIds = successfulAgents.map((a) => a.id);
+
   if (!successfulAgents.length) {
     finalStatus = "dnf";
     dnfReason = "No agent completed the task";
@@ -2020,11 +2115,14 @@ async function main() {
     await recordDNF(opts, dnfReason, dnfDetails);
   } else {
     banner("Reviewer loop (Codex)", C.magenta);
+    if (successfulAgentIds.length < activeAgents.length) {
+      console.log(C.yellow(`Reviewing with ${successfulAgentIds.length}/${activeAgents.length} successful agents: ${successfulAgentIds.join(", ")}`));
+    }
     for (let r = 1; r <= Math.max(1, rounds); r++) {
       console.log(C.cyan(`Round ${r}`));
-      const statusSummary = buildStatusSummary(agents);
+      const statusSummary = buildStatusSummary(agents as Record<AgentId, AgentStatusSource>);
       const summaryBlock = `- ${statusSummary}`;
-      const outcome = await doReview(opts, agents, summaryBlock);
+      const outcome = await doReview(opts, agents, summaryBlock, successfulAgentIds);
       if (outcome.status === "approved") {
         mergeBranch = outcome.mergeBranch;
         finalStatus = "approved";
@@ -2055,7 +2153,7 @@ async function main() {
     const report = generateRunReport(
       opts,
       agentResults,
-      agents,
+      agents as Record<AgentId, AgentRunner>,
       finalStatus === "approved" ? "approved" : "dnf",
       runStartTime,
       mergeBranch,
@@ -2065,7 +2163,8 @@ async function main() {
     console.log(C.dim(`Failed to write run report: ${err instanceof Error ? err.message : err}`));
   }
 
-  await cleanup(repo, [wGem, wCla, wCdx]);
+  const allWorktrees = activeAgents.map((id) => worktreeMap[id]!);
+  await cleanup(repo, allWorktrees);
 
   if (finalStatus === "approved") {
     banner("All done", C.green);
@@ -2113,12 +2212,16 @@ if (isDirectRun) {
 export {
   VERSION,
   MODELS,
+  DEFAULT_MODELS,
+  AGENT_IDS,
+  resolveModels,
   C,
   TAG,
   line,
   box,
   banner,
   parseArgs,
+  parseAgentsList,
   parseFirstJson,
   systemConstraints,
   featurePrompt,
@@ -2132,4 +2235,4 @@ export {
   generateRunReport,
   writeRunReport,
 };
-export type { AgentId, Opts, ReviewerDecision, AgentRunResult, RunReport, AgentReport, AgentStats };
+export type { AgentId, Opts, ReviewerDecision, AgentRunResult, RunReport, AgentReport, AgentStats, ParsedArgs };

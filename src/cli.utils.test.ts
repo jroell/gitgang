@@ -29,6 +29,8 @@ describe("Parsed args normalization", () => {
       workRoot: "   ",
       timeoutMs: 10_000,
       autoPR: true,
+      dryRun: false,
+      activeAgents: ["gemini", "claude", "codex"],
     });
     expect(result.rounds).toBe(1);
     expect(result.workRoot).toBe(".ai-worktrees");
@@ -43,6 +45,8 @@ describe("Parsed args normalization", () => {
       workRoot: "custom",
       timeoutMs: 120 * 60 * 1000,
       autoPR: false,
+      dryRun: false,
+      activeAgents: ["gemini", "claude", "codex"],
     });
     expect(result.rounds).toBe(10);
     expect(result.timeoutMs).toBe(60 * 60 * 1000);

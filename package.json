@@ -1,6 +1,6 @@
 {
   "name": "gitgang",
-  "version": "1.4.23",
+  "version": "1.4.25",
   "type": "module",
   "description": "The gang's all here to code - AI-powered collaborative development",
   "bin": {
@@ -17,6 +17,7 @@
     "scripts/ensure-clis.mjs"
   ],
   "dependencies": {
+    "@rollup/rollup-linux-arm64-gnu": "^4.60.1",
     "boxen": "^8.0.1",
     "chalk": "^5.3.0",
     "cli-boxes": "^4.0.1",

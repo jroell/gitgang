@@ -52,6 +52,8 @@ describe("applyMergePlan integration", () => {
       timeoutMs: 1_000,
       yolo: true,
       autoPR: false,
+      dryRun: false,
+      activeAgents: ["gemini", "claude", "codex"],
     };
   }
 
@@ -232,5 +234,101 @@ describe("collectDiffSummaries integration", () => {
     expect(summaries.codex).toBe("(branch not available)");
     // nonexistent branch should return error message, not throw
     expect(typeof summaries.claude).toBe("string");
+  });
+});
+
+describe("applyMergePlan with partial agents", () => {
+  let repo: string;
+
+  beforeEach(async () => {
+    repo = join(tmpdir(), `gitgang-partial-${randomUUID()}`);
+    mkdirSync(repo, { recursive: true });
+    await runGit(repo, "init");
+    await runGit(repo, "config", "user.name", "Test User");
+    await runGit(repo, "config", "user.email", "test@example.com");
+    writeFileSync(join(repo, "README.md"), "# Base\n");
+    await runGit(repo, "add", ".");
+    await runGit(repo, "commit", "-m", "initial");
+    await runGit(repo, "branch", "-M", "main");
+  });
+
+  afterEach(() => {
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  async function createAgentBranch(name: string, file: string, contents: string) {
+    const branch = `agents/${name}/partial`;
+    await runGit(repo, "checkout", "-b", branch, "main");
+    writeFileSync(join(repo, file), contents);
+    await runGit(repo, "add", file);
+    await runGit(repo, "commit", "-m", `${name} change`);
+    await runGit(repo, "checkout", "main");
+    return branch;
+  }
+
+  test("merges only specified subset of agents", async () => {
+    const geminiBranch = await createAgentBranch("gemini", "g.txt", "gemini");
+    const claudeBranch = await createAgentBranch("claude", "c.txt", "claude");
+
+    const opts: Opts = {
+      task: "Test",
+      repoRoot: repo,
+      baseBranch: "main",
+      workRoot: ".ai-worktrees",
+      rounds: 1,
+      timeoutMs: 1_000,
+      yolo: true,
+      autoPR: false,
+      dryRun: false,
+      activeAgents: ["gemini", "claude"],
+    };
+
+    const decision: ReviewerDecision = {
+      status: "approve",
+      mergePlan: {
+        order: [geminiBranch, claudeBranch],
+        postMergeChecks: [],
+      },
+    };
+
+    const result = await applyMergePlan(opts, {
+      gemini: { agent: "gemini", branch: geminiBranch, dir: "", log: "" },
+      claude: { agent: "claude", branch: claudeBranch, dir: "", log: "" },
+    }, decision);
+
+    expect(result.ok).toBe(true);
+    expect(result.branch).toMatch(/^ai-merge-/);
+  });
+
+  test("uses available branches for default order when no merge plan order", async () => {
+    const geminiBranch = await createAgentBranch("gemini", "g.txt", "gemini only");
+
+    const opts: Opts = {
+      task: "Test",
+      repoRoot: repo,
+      baseBranch: "main",
+      workRoot: ".ai-worktrees",
+      rounds: 1,
+      timeoutMs: 1_000,
+      yolo: true,
+      autoPR: false,
+      dryRun: false,
+      activeAgents: ["gemini"],
+    };
+
+    const decision: ReviewerDecision = {
+      status: "approve",
+      mergePlan: {
+        // No order specified — should fall back to available branches
+        postMergeChecks: [],
+      },
+    };
+
+    const result = await applyMergePlan(opts, {
+      gemini: { agent: "gemini", branch: geminiBranch, dir: "", log: "" },
+    }, decision);
+
+    expect(result.ok).toBe(true);
+    expect(result.branch).toMatch(/^ai-merge-/);
   });
 });
