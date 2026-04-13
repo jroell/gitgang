@@ -133,6 +133,14 @@ class GitgangAgent(BaseInstalledAgent):
         escaped_instruction = shlex.quote(instruction)
 
         # Mirror the reference claude_code.py auth handling
+        # Harbor's default agent timeout is 900s. The run() method starts after
+        # install completes, so nearly all 900s is available here. We reserve
+        # 60s of buffer for harbor overhead and pass the rest to gitgang so the
+        # agent can self-limit before being killed externally.
+        HARBOR_AGENT_TIMEOUT_SEC = 900
+        GITGANG_BUFFER_SEC = 60
+        time_budget_sec = HARBOR_AGENT_TIMEOUT_SEC - GITGANG_BUFFER_SEC  # 840s
+
         env = {
             "ANTHROPIC_API_KEY": (
                 os.environ.get("ANTHROPIC_API_KEY")
@@ -144,8 +152,11 @@ class GitgangAgent(BaseInstalledAgent):
             "IS_SANDBOX": "1",
             "FORCE_AUTO_BACKGROUND_TASKS": "1",
             "ENABLE_BACKGROUND_TASKS": "1",
-            # 10-min idle timeout for claude inside gitgang
+            # Idle timeout for claude inside gitgang (ms)
             "GITGANG_AGENT_IDLE_TIMEOUT": "600000",
+            # Time budget passed into gitgang so it can inform the agent and
+            # enforce a subprocess timeout before harbor's hard kill.
+            "GITGANG_TIME_BUDGET_SECONDS": str(time_budget_sec),
         }
         env = {k: v for k, v in env.items() if v}
 

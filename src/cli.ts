@@ -307,6 +307,17 @@ async function createWorktree(
 }
 
 function systemConstraints(agent: AgentId) {
+  const timeBudget = process.env.GITGANG_TIME_BUDGET_SECONDS
+    ? parseInt(process.env.GITGANG_TIME_BUDGET_SECONDS, 10)
+    : null;
+  const timeLines = timeBudget
+    ? [
+        `Time budget: You have approximately ${timeBudget} seconds total to complete this task.`,
+        `Strategy: commit a minimal working solution within the first ${Math.floor(timeBudget / 3)} seconds, then improve iteratively.`,
+        "A committed partial solution is far better than a perfect solution that never gets committed.",
+        "Do not spend more than half your budget exploring or planning before writing and committing real code.",
+      ]
+    : [];
   return [
     "You are an autonomous senior engineer with full authorization to edit files, run shell commands, install dependencies, and run tests.",
     "Do not ask for permission. Decide and proceed.",
@@ -315,6 +326,7 @@ function systemConstraints(agent: AgentId) {
     "If something fails, debug and keep going until complete.",
     "Prefer editing files with apply_patch or here-doc writes; the 'replace' tool can fail when paths include extra whitespace.",
     "At the end, summarize what changed and any follow ups.",
+    ...timeLines,
   ].join("\n");
 }
 
@@ -615,7 +627,13 @@ async function runClaude(
   ];
   if (yolo) args.push("--dangerously-skip-permissions");
   // Wrap in bash to pipe prompt file to claude to avoid shell escaping issues
-  const bashCmd = `cat "${promptFile}" | claude ${args.join(" ")}`;
+  // If a time budget is set, wrap with `timeout` so the agent exits gracefully
+  // before an external deadline (e.g. benchmark harness) kills the container.
+  const timeBudget = process.env.GITGANG_TIME_BUDGET_SECONDS
+    ? parseInt(process.env.GITGANG_TIME_BUDGET_SECONDS, 10)
+    : null;
+  const timeoutPrefix = timeBudget ? `timeout ${timeBudget} ` : "";
+  const bashCmd = `${timeoutPrefix}bash -c 'cat "${promptFile}" | claude ${args.join(" ")}'`;
   const proc = spawnProcess(["bash", "-c", bashCmd], {
     cwd: w.dir,
   });
