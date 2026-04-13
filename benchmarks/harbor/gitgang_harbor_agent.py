@@ -132,8 +132,15 @@ class GitgangAgent(BaseInstalledAgent):
     ) -> None:
         escaped_instruction = shlex.quote(instruction)
 
+        # Mirror the reference claude_code.py auth handling
         env = {
-            "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY", ""),
+            "ANTHROPIC_API_KEY": (
+                os.environ.get("ANTHROPIC_API_KEY")
+                or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+                or ""
+            ),
+            "CLAUDE_CODE_OAUTH_TOKEN": os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", ""),
+            "ANTHROPIC_BASE_URL": os.environ.get("ANTHROPIC_BASE_URL", ""),
             "IS_SANDBOX": "1",
             "FORCE_AUTO_BACKGROUND_TASKS": "1",
             "ENABLE_BACKGROUND_TASKS": "1",
