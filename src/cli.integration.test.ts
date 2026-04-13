@@ -56,6 +56,7 @@ describe("applyMergePlan integration", () => {
       activeAgents: ["gemini", "claude", "codex"],
       reviewerAgent: "codex",
       postMergeChecks: [],
+      soloMode: false,
     };
   }
 
@@ -285,6 +286,7 @@ describe("applyMergePlan with partial agents", () => {
       activeAgents: ["gemini", "claude"],
       reviewerAgent: "codex",
       postMergeChecks: [],
+      soloMode: false,
     };
 
     const decision: ReviewerDecision = {
@@ -320,6 +322,7 @@ describe("applyMergePlan with partial agents", () => {
       activeAgents: ["gemini"],
       reviewerAgent: "codex",
       postMergeChecks: [],
+      soloMode: false,
     };
 
     const decision: ReviewerDecision = {

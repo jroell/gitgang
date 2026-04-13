@@ -21,7 +21,7 @@ import chalk from "chalk";
 import ora from "ora";
 import { renderSidebar } from "./sidebar.js";
 
-const VERSION = "1.5.0";
+const VERSION = "1.5.2";
 const REQUIRED_BINARIES = ["git", "gemini", "claude", "codex"] as const;
 const DEFAULT_AGENT_IDLE_TIMEOUT_MS = Number(
   process.env.GITGANG_AGENT_IDLE_TIMEOUT ?? 7 * 60 * 1000,
@@ -68,6 +68,7 @@ interface Opts {
   activeAgents: AgentId[];
   reviewerAgent: AgentId;
   postMergeChecks: string[];
+  soloMode: boolean;
 }
 
 interface Worktree {
@@ -834,6 +835,7 @@ function parseArgs(raw: string[]) {
   let activeAgents: AgentId[] = [...AGENT_IDS];
   let reviewerAgent: AgentId = "codex";
   let postMergeChecks: string[] = [];
+  let soloMode = false;
 
   const bool = (v?: string) =>
     ["1", "true", "yes", "on"].includes((v || "").toLowerCase());
@@ -892,6 +894,16 @@ function parseArgs(raw: string[]) {
         if (i + 1 >= raw.length) throw new Error("--check requires a command string");
         postMergeChecks.push(raw[++i]);
         break;
+      case "--solo": {
+        if (i + 1 >= raw.length) throw new Error("--solo requires an agent name (gemini, claude, or codex)");
+        const soloAgent = raw[++i].toLowerCase();
+        if (!isAgentId(soloAgent)) throw new Error(`Invalid solo agent "${soloAgent}". Must be one of: gemini, claude, codex`);
+        activeAgents = [soloAgent as AgentId];
+        reviewerAgent = soloAgent as AgentId;
+        soloMode = true;
+        rounds = 1;
+        break;
+      }
       default:
         if (!token.startsWith("-") && task === undefined) {
           task = token;
@@ -900,7 +912,7 @@ function parseArgs(raw: string[]) {
     }
   }
 
-  return normalizeParsedArgs({ task, rounds, yolo, workRoot, timeoutMs, autoPR, dryRun, activeAgents, reviewerAgent, postMergeChecks });
+  return normalizeParsedArgs({ task, rounds, yolo, workRoot, timeoutMs, autoPR, dryRun, activeAgents, reviewerAgent, postMergeChecks, soloMode });
 }
 
 interface ParsedArgs {
@@ -914,6 +926,7 @@ interface ParsedArgs {
   activeAgents: AgentId[];
   reviewerAgent: AgentId;
   postMergeChecks: string[];
+  soloMode: boolean;
 }
 
 export function normalizeParsedArgs(parsed: ParsedArgs): ParsedArgs {
@@ -952,6 +965,7 @@ export function normalizeParsedArgs(parsed: ParsedArgs): ParsedArgs {
     activeAgents: parsed.activeAgents?.length ? parsed.activeAgents : [...AGENT_IDS],
     reviewerAgent: parsed.reviewerAgent ?? "codex",
     postMergeChecks: parsed.postMergeChecks ?? [],
+    soloMode: parsed.soloMode ?? false,
   };
 }
 
@@ -1915,6 +1929,7 @@ interface AgentReport {
   reason?: string;
   stats: AgentStats;
   lastError?: string;
+  diffSummary?: string;
 }
 
 interface RunReport {
@@ -1929,6 +1944,7 @@ interface RunReport {
   agents: AgentReport[];
   models: Record<AgentId, string>;
   reviewerAgent: AgentId;
+  soloMode?: boolean;
 }
 
 function generateRunReport(
@@ -1938,6 +1954,8 @@ function generateRunReport(
   outcome: "approved" | "dnf",
   startTime: number,
   mergeBranch?: string,
+  diffSummaries?: Partial<Record<AgentId, string>>,
+  soloMode?: boolean,
 ): RunReport {
   const agentReports: AgentReport[] = agentResults.map(({ id, result }) => ({
     agent: id,
@@ -1949,6 +1967,7 @@ function generateRunReport(
     reason: result.reason,
     stats: agents[id].getStats(),
     lastError: agents[id].getLastError(),
+    diffSummary: diffSummaries?.[id],
   }));
 
   return {
@@ -1963,6 +1982,7 @@ function generateRunReport(
     agents: agentReports,
     models: { ...MODELS },
     reviewerAgent: opts.reviewerAgent,
+    soloMode,
   };
 }
 
@@ -1996,9 +2016,13 @@ Usage
   gg "Do this task"
   gitgang "Do this task"
   gitgang --task "Do this task" [--rounds N] [--no-yolo] [--workRoot PATH] [--timeout 25m] [--no-pr] [--dry-run] [--agents gemini,claude,codex] [--reviewer codex] [--check "npm test"]
+  gitgang --solo claude "Do this task"
 
 Defaults
   rounds=3, yolo=true, workRoot=.ai-worktrees, timeout=25m, agents=gemini,claude,codex, reviewer=codex
+
+Solo Mode
+  --solo <agent>  Run a single agent without reviewer (skips multi-agent comparison)
 
 Environment Variables
   GITGANG_GEMINI_MODEL  Override Gemini model (default: ${DEFAULT_MODELS.gemini})
@@ -2023,7 +2047,7 @@ async function main() {
     return;
   }
 
-  let { task, rounds, yolo, workRoot, timeoutMs, autoPR, dryRun, activeAgents, reviewerAgent, postMergeChecks } = parseArgs(argv);
+  let { task, rounds, yolo, workRoot, timeoutMs, autoPR, dryRun, activeAgents, reviewerAgent, postMergeChecks, soloMode } = parseArgs(argv);
   if (!task) {
     printHelp();
     process.exit(1);
@@ -2046,6 +2070,7 @@ async function main() {
     activeAgents,
     reviewerAgent,
     postMergeChecks,
+    soloMode,
   };
 
   const runtime = await prepareRuntime(opts);
@@ -2053,7 +2078,11 @@ async function main() {
 
   const runStartTime = Date.now();
 
-  banner("🤘 GitGang - The gang's all here to code!", C.blue);
+  if (soloMode) {
+    banner(`🤘 GitGang Solo - ${activeAgents[0]} going it alone!`, C.blue);
+  } else {
+    banner("🤘 GitGang - The gang's all here to code!", C.blue);
+  }
   console.log(`${C.gray("Repository:")} ${C.cyan(repo)}`);
   console.log(`${C.gray("Base branch:")} ${C.cyan(base)}`);
   console.log(`${C.gray("Task:")} ${task}`);
@@ -2328,4 +2357,5 @@ export {
   generateRunReport,
   writeRunReport,
 };
+export { isAgentId };
 export type { AgentId, Opts, ReviewerDecision, AgentRunResult, RunReport, AgentReport, AgentStats, ParsedArgs };

@@ -38,6 +38,7 @@ function makeOpts(overrides: Partial<Opts> = {}): Opts {
     activeAgents: ["gemini", "claude", "codex"],
     reviewerAgent: "codex",
     postMergeChecks: [],
+    soloMode: false,
     ...overrides,
   };
 }
@@ -259,5 +260,93 @@ describe("writeRunReport", () => {
     await writeRunReport(dir, report);
 
     expect(existsSync(reportsDir)).toBe(true);
+  });
+});
+
+describe("generateRunReport with diff summaries", () => {
+  test("includes diff summaries per agent when provided", () => {
+    const opts = makeOpts();
+    const startTime = Date.now();
+    const emptyStats: AgentStats = { filesChanged: 0, additions: 0, deletions: 0, commits: 0, errors: 0 };
+
+    const agentResults: Array<{ id: "gemini" | "claude" | "codex"; result: AgentRunResult }> = [
+      { id: "gemini", result: { status: "success", exitCode: 0, restarts: 0 } },
+      { id: "claude", result: { status: "success", exitCode: 0, restarts: 0 } },
+      { id: "codex", result: { status: "success", exitCode: 0, restarts: 0 } },
+    ];
+
+    const agents = {
+      gemini: mockAgentRunner("gemini", "agents/gemini/test", emptyStats),
+      claude: mockAgentRunner("claude", "agents/claude/test", emptyStats),
+      codex: mockAgentRunner("codex", "agents/codex/test", emptyStats),
+    };
+
+    const diffSummaries = {
+      gemini: " src/foo.ts | 10 +++++++---\n 1 file changed, 7 insertions(+), 3 deletions(-)",
+      claude: " src/bar.ts | 5 +++++\n 1 file changed, 5 insertions(+)",
+      codex: "(no changes)",
+    };
+
+    const report = generateRunReport(opts, agentResults, agents as any, "approved", startTime, "ai-merge-test", diffSummaries);
+
+    const geminiReport = report.agents.find((a) => a.agent === "gemini")!;
+    expect(geminiReport.diffSummary).toContain("src/foo.ts");
+
+    const claudeReport = report.agents.find((a) => a.agent === "claude")!;
+    expect(claudeReport.diffSummary).toContain("src/bar.ts");
+
+    const codexReport = report.agents.find((a) => a.agent === "codex")!;
+    expect(codexReport.diffSummary).toBe("(no changes)");
+  });
+
+  test("diff summaries are undefined when not provided", () => {
+    const opts = makeOpts();
+    const emptyStats: AgentStats = { filesChanged: 0, additions: 0, deletions: 0, commits: 0, errors: 0 };
+
+    const agentResults: Array<{ id: "gemini" | "claude" | "codex"; result: AgentRunResult }> = [
+      { id: "gemini", result: { status: "success", exitCode: 0, restarts: 0 } },
+      { id: "claude", result: { status: "success", exitCode: 0, restarts: 0 } },
+      { id: "codex", result: { status: "success", exitCode: 0, restarts: 0 } },
+    ];
+
+    const agents = {
+      gemini: mockAgentRunner("gemini", "agents/gemini/test", emptyStats),
+      claude: mockAgentRunner("claude", "agents/claude/test", emptyStats),
+      codex: mockAgentRunner("codex", "agents/codex/test", emptyStats),
+    };
+
+    const report = generateRunReport(opts, agentResults, agents as any, "approved", Date.now());
+
+    for (const agentReport of report.agents) {
+      expect(agentReport.diffSummary).toBeUndefined();
+    }
+  });
+
+  test("solo mode flag is recorded in the report", () => {
+    const opts = makeOpts({ soloMode: true, activeAgents: ["claude"], rounds: 1 });
+    const emptyStats: AgentStats = { filesChanged: 0, additions: 0, deletions: 0, commits: 0, errors: 0 };
+
+    const agentResults: Array<{ id: "gemini" | "claude" | "codex"; result: AgentRunResult }> = [
+      { id: "claude", result: { status: "success", exitCode: 0, restarts: 0 } },
+    ];
+
+    const agents = {
+      claude: mockAgentRunner("claude", "agents/claude/solo", emptyStats),
+    };
+
+    const report = generateRunReport(
+      opts,
+      agentResults,
+      agents as any,
+      "approved",
+      Date.now(),
+      "ai-merge-solo",
+      undefined,
+      true,
+    );
+
+    expect(report.soloMode).toBe(true);
+    expect(report.agents).toHaveLength(1);
+    expect(report.agents[0].agent).toBe("claude");
   });
 });

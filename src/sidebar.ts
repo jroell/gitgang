@@ -132,6 +132,7 @@ export function renderHelloWorldSidebar(
     activeAgents: ["codex"],
     reviewerAgent: "codex",
     postMergeChecks: [],
+    soloMode: false,
   };
 
   return renderSidebar(agents, opts, {

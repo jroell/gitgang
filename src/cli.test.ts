@@ -19,6 +19,7 @@ import {
   DEFAULT_MODELS,
   AGENT_IDS,
   resolveModels,
+  isAgentId,
 } from "./cli";
 
 function createTempDir(): string {
@@ -142,6 +143,7 @@ describe("DNF recording", () => {
         activeAgents: ["gemini", "claude", "codex"],
         reviewerAgent: "codex",
         postMergeChecks: [],
+        soloMode: false,
       },
       "Timeout",
       "details",
@@ -620,5 +622,66 @@ describe("--check flag (post-merge checks)", () => {
 
   test("--check missing value throws", () => {
     expect(() => parseArgs(["--check"])).toThrow("--check requires a command");
+  });
+});
+
+describe("Solo mode (--solo flag)", () => {
+  test("--solo claude sets single agent and solo mode", () => {
+    const parsed = parseArgs(["--solo", "claude", "Fix the bug"]);
+    expect(parsed.soloMode).toBe(true);
+    expect(parsed.activeAgents).toEqual(["claude"]);
+    expect(parsed.reviewerAgent).toBe("claude");
+    expect(parsed.rounds).toBe(1);
+    expect(parsed.task).toBe("Fix the bug");
+  });
+
+  test("--solo gemini sets gemini as sole agent", () => {
+    const parsed = parseArgs(["--solo", "gemini", "Add tests"]);
+    expect(parsed.soloMode).toBe(true);
+    expect(parsed.activeAgents).toEqual(["gemini"]);
+    expect(parsed.reviewerAgent).toBe("gemini");
+  });
+
+  test("--solo codex sets codex as sole agent", () => {
+    const parsed = parseArgs(["--solo", "codex", "Refactor module"]);
+    expect(parsed.soloMode).toBe(true);
+    expect(parsed.activeAgents).toEqual(["codex"]);
+    expect(parsed.reviewerAgent).toBe("codex");
+  });
+
+  test("--solo with invalid agent throws", () => {
+    expect(() => parseArgs(["--solo", "gpt4", "Task"])).toThrow('Invalid solo agent "gpt4"');
+  });
+
+  test("--solo missing agent throws", () => {
+    expect(() => parseArgs(["--solo"])).toThrow("--solo requires an agent name");
+  });
+
+  test("--solo works with other flags", () => {
+    const parsed = parseArgs(["--solo", "claude", "--timeout", "10m", "--dry-run", "Task"]);
+    expect(parsed.soloMode).toBe(true);
+    expect(parsed.activeAgents).toEqual(["claude"]);
+    expect(parsed.dryRun).toBe(true);
+    expect(parsed.timeoutMs).toBe(10 * 60 * 1000);
+  });
+
+  test("default soloMode is false", () => {
+    const parsed = parseArgs(["Task"]);
+    expect(parsed.soloMode).toBe(false);
+    expect(parsed.activeAgents).toEqual(["gemini", "claude", "codex"]);
+  });
+});
+
+describe("isAgentId", () => {
+  test("returns true for valid agent ids", () => {
+    expect(isAgentId("gemini")).toBe(true);
+    expect(isAgentId("claude")).toBe(true);
+    expect(isAgentId("codex")).toBe(true);
+  });
+
+  test("returns false for invalid agent ids", () => {
+    expect(isAgentId("gpt4")).toBe(false);
+    expect(isAgentId("")).toBe(false);
+    expect(isAgentId("CLAUDE")).toBe(false);
   });
 });
