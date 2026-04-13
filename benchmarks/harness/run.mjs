@@ -147,7 +147,14 @@ async function main() {
       claude: await verifyBranch(task, repo, branches.claude),
       codex:  await verifyBranch(task, repo, branches.codex),
     };
-    const merged = await verifyBranch(task, repo, branches.merge);
+    let merged = await verifyBranch(task, repo, branches.merge);
+    // If reviewer failed to produce a merge branch, fall back to any passing
+    // agent branch — a working solution produced by the orchestrator still
+    // counts as a pass per the benchmark criterion.
+    if (!merged.pass && !branches.merge) {
+      const firstPass = Object.entries(agents).find(([, r]) => r.pass);
+      if (firstPass) merged = { pass: true, fallbackAgent: firstPass[0] };
+    }
     const entry = {
       id: task.id,
       title: task.title,

@@ -133,7 +133,7 @@ interface ReviewerDecision {
 }
 
 const DEFAULT_MODELS: Record<AgentId, string> = {
-  gemini: "gemini-3-1-pro",
+  gemini: "gemini-3.1-pro",
   claude: "claude-opus-4-6",
   codex: "gpt-5.4",
 };
@@ -836,6 +836,7 @@ function parseArgs(raw: string[]) {
   let reviewerAgent: AgentId = "codex";
   let postMergeChecks: string[] = [];
   let soloMode = false;
+  let modelOverrides: Partial<Record<AgentId, string>> = {};
 
   const bool = (v?: string) =>
     ["1", "true", "yes", "on"].includes((v || "").toLowerCase());
@@ -904,6 +905,18 @@ function parseArgs(raw: string[]) {
         rounds = 1;
         break;
       }
+      case "--model-gemini":
+        if (i + 1 >= raw.length) throw new Error("--model-gemini requires a model name");
+        modelOverrides.gemini = raw[++i];
+        break;
+      case "--model-claude":
+        if (i + 1 >= raw.length) throw new Error("--model-claude requires a model name");
+        modelOverrides.claude = raw[++i];
+        break;
+      case "--model-codex":
+        if (i + 1 >= raw.length) throw new Error("--model-codex requires a model name");
+        modelOverrides.codex = raw[++i];
+        break;
       default:
         if (!token.startsWith("-") && task === undefined) {
           task = token;
@@ -912,7 +925,7 @@ function parseArgs(raw: string[]) {
     }
   }
 
-  return normalizeParsedArgs({ task, rounds, yolo, workRoot, timeoutMs, autoPR, dryRun, activeAgents, reviewerAgent, postMergeChecks, soloMode });
+  return normalizeParsedArgs({ task, rounds, yolo, workRoot, timeoutMs, autoPR, dryRun, activeAgents, reviewerAgent, postMergeChecks, soloMode, modelOverrides });
 }
 
 interface ParsedArgs {
@@ -927,6 +940,7 @@ interface ParsedArgs {
   reviewerAgent: AgentId;
   postMergeChecks: string[];
   soloMode: boolean;
+  modelOverrides?: Partial<Record<AgentId, string>>;
 }
 
 export function normalizeParsedArgs(parsed: ParsedArgs): ParsedArgs {
@@ -966,7 +980,22 @@ export function normalizeParsedArgs(parsed: ParsedArgs): ParsedArgs {
     reviewerAgent: parsed.reviewerAgent ?? "codex",
     postMergeChecks: parsed.postMergeChecks ?? [],
     soloMode: parsed.soloMode ?? false,
+    modelOverrides: parsed.modelOverrides ?? {},
   };
+}
+
+/**
+ * Apply per-agent model overrides directly to the runtime MODELS object.
+ * Overrides from --model-gemini / --model-claude / --model-codex CLI flags
+ * take precedence over both defaults and GITGANG_*_MODEL env vars.
+ */
+export function applyModelOverrides(overrides: Partial<Record<AgentId, string>>): void {
+  for (const id of AGENT_IDS) {
+    const model = overrides[id];
+    if (model && model.trim()) {
+      MODELS[id] = model.trim();
+    }
+  }
 }
 
 const ORCHESTRATOR_LOG = "orchestrator.log";
@@ -2024,6 +2053,11 @@ Defaults
 Solo Mode
   --solo <agent>  Run a single agent without reviewer (skips multi-agent comparison)
 
+Model Overrides (CLI flags take precedence over env vars)
+  --model-gemini <model>  Override Gemini model (default: ${DEFAULT_MODELS.gemini})
+  --model-claude <model>  Override Claude model (default: ${DEFAULT_MODELS.claude})
+  --model-codex  <model>  Override Codex model  (default: ${DEFAULT_MODELS.codex})
+
 Environment Variables
   GITGANG_GEMINI_MODEL  Override Gemini model (default: ${DEFAULT_MODELS.gemini})
   GITGANG_CLAUDE_MODEL  Override Claude model (default: ${DEFAULT_MODELS.claude})
@@ -2047,7 +2081,10 @@ async function main() {
     return;
   }
 
-  let { task, rounds, yolo, workRoot, timeoutMs, autoPR, dryRun, activeAgents, reviewerAgent, postMergeChecks, soloMode } = parseArgs(argv);
+  let { task, rounds, yolo, workRoot, timeoutMs, autoPR, dryRun, activeAgents, reviewerAgent, postMergeChecks, soloMode, modelOverrides } = parseArgs(argv);
+  if (modelOverrides && Object.keys(modelOverrides).length > 0) {
+    applyModelOverrides(modelOverrides);
+  }
   if (!task) {
     printHelp();
     process.exit(1);

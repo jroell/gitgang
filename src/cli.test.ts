@@ -17,8 +17,10 @@ import {
   reviewerPromptJSON,
   recordDNF,
   DEFAULT_MODELS,
+  MODELS,
   AGENT_IDS,
   resolveModels,
+  applyModelOverrides,
   isAgentId,
 } from "./cli";
 
@@ -284,7 +286,7 @@ describe("Model configuration", () => {
   });
 
   test("DEFAULT_MODELS contains expected default values", () => {
-    expect(DEFAULT_MODELS.gemini).toBe("gemini-3-1-pro");
+    expect(DEFAULT_MODELS.gemini).toBe("gemini-3.1-pro");
     expect(DEFAULT_MODELS.claude).toBe("claude-opus-4-6");
     expect(DEFAULT_MODELS.codex).toBe("gpt-5.4");
   });
@@ -683,5 +685,95 @@ describe("isAgentId", () => {
     expect(isAgentId("gpt4")).toBe(false);
     expect(isAgentId("")).toBe(false);
     expect(isAgentId("CLAUDE")).toBe(false);
+  });
+});
+
+describe("Per-agent model override flags (--model-*)", () => {
+  const originalGemini = MODELS.gemini;
+  const originalClaude = MODELS.claude;
+  const originalCodex = MODELS.codex;
+
+  afterEach(() => {
+    // Restore MODELS after each test since applyModelOverrides mutates it
+    MODELS.gemini = originalGemini;
+    MODELS.claude = originalClaude;
+    MODELS.codex = originalCodex;
+  });
+
+  test("--model-gemini overrides the gemini model in parsed args", () => {
+    const parsed = parseArgs(["--model-gemini", "gemini-2.5-flash", "Task"]);
+    expect(parsed.modelOverrides?.gemini).toBe("gemini-2.5-flash");
+    expect(parsed.task).toBe("Task");
+  });
+
+  test("--model-claude overrides the claude model in parsed args", () => {
+    const parsed = parseArgs(["--model-claude", "claude-sonnet-4-6", "Task"]);
+    expect(parsed.modelOverrides?.claude).toBe("claude-sonnet-4-6");
+  });
+
+  test("--model-codex overrides the codex model in parsed args", () => {
+    const parsed = parseArgs(["--model-codex", "gpt-5.4-mini", "Task"]);
+    expect(parsed.modelOverrides?.codex).toBe("gpt-5.4-mini");
+  });
+
+  test("all three --model-* flags can be used together", () => {
+    const parsed = parseArgs([
+      "--model-gemini", "gemini-2.5-pro",
+      "--model-claude", "claude-sonnet-4-6",
+      "--model-codex", "gpt-5.4-mini",
+      "Task",
+    ]);
+    expect(parsed.modelOverrides?.gemini).toBe("gemini-2.5-pro");
+    expect(parsed.modelOverrides?.claude).toBe("claude-sonnet-4-6");
+    expect(parsed.modelOverrides?.codex).toBe("gpt-5.4-mini");
+  });
+
+  test("--model-gemini missing value throws", () => {
+    expect(() => parseArgs(["--model-gemini"])).toThrow("--model-gemini requires a model name");
+  });
+
+  test("--model-claude missing value throws", () => {
+    expect(() => parseArgs(["--model-claude"])).toThrow("--model-claude requires a model name");
+  });
+
+  test("--model-codex missing value throws", () => {
+    expect(() => parseArgs(["--model-codex"])).toThrow("--model-codex requires a model name");
+  });
+
+  test("modelOverrides defaults to empty object when no --model-* flags", () => {
+    const parsed = parseArgs(["Task"]);
+    expect(parsed.modelOverrides).toEqual({});
+  });
+
+  test("applyModelOverrides updates MODELS for specified agents", () => {
+    applyModelOverrides({ gemini: "gemini-2.5-flash", codex: "gpt-5.4-mini" });
+    expect(MODELS.gemini).toBe("gemini-2.5-flash");
+    expect(MODELS.codex).toBe("gpt-5.4-mini");
+    expect(MODELS.claude).toBe(originalClaude); // unchanged
+  });
+
+  test("applyModelOverrides ignores empty/whitespace model strings", () => {
+    applyModelOverrides({ gemini: "  " });
+    expect(MODELS.gemini).toBe(originalGemini); // not mutated
+  });
+
+  test("applyModelOverrides trims whitespace from model names", () => {
+    applyModelOverrides({ claude: "  claude-sonnet-4-6  " });
+    expect(MODELS.claude).toBe("claude-sonnet-4-6");
+  });
+
+  test("--model-* flags work alongside other flags", () => {
+    const parsed = parseArgs([
+      "--model-gemini", "gemini-3.1-pro",
+      "--rounds", "2",
+      "--dry-run",
+      "--agents", "gemini,claude",
+      "Build it",
+    ]);
+    expect(parsed.modelOverrides?.gemini).toBe("gemini-3.1-pro");
+    expect(parsed.rounds).toBe(2);
+    expect(parsed.dryRun).toBe(true);
+    expect(parsed.activeAgents).toEqual(["gemini", "claude"]);
+    expect(parsed.task).toBe("Build it");
   });
 });
