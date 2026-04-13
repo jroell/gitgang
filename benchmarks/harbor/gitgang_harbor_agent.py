@@ -23,13 +23,13 @@ class GitgangAgent(BaseInstalledAgent):
     Runs gitgang --solo claude inside a terminal-bench Docker container.
 
     install() steps:
-      1. System packages (curl, git, nodejs, npm) via root
-      2. claude-code via the official install script (as agent user)
-      3. Clone jroell/gitgang, npm ci --ignore-scripts --omit=optional, npm run build (as root)
-      4. Symlink /opt/gitgang/dist/cli.js → /usr/local/bin/gitgang
+      1. Node 20 LTS via NodeSource + curl/git via apt/apk/yum (root)
+      2. claude-code via the official install script (agent user)
+      3. Clone jroell/gitgang + npm ci --ignore-scripts + npm run build (root)
+      4. Symlink dist/cli.js -> /usr/local/bin/gitgang
 
     run() steps:
-      1. Ensure the CWD is a git repo (terminal-bench envs may start without one)
+      1. Ensure CWD is a git repo (terminal-bench envs may not have one)
       2. Run: gitgang --solo claude --yolo --no-pr -- "<instruction>"
     """
 
@@ -37,31 +37,35 @@ class GitgangAgent(BaseInstalledAgent):
 
     @staticmethod
     def name() -> str:
-        # Custom name — not in AgentName enum; loaded via import_path
         return "gitgang"
 
     def get_version_command(self) -> str | None:
         return "node /opt/gitgang/dist/cli.js --version 2>/dev/null || echo unknown"
 
     async def install(self, environment: BaseEnvironment) -> None:
-        # ── 1. System packages ──────────────────────────────────────────────
+        # ── 1. System packages + Node 20 LTS ───────────────────────────────
         await self.exec_as_root(
             environment,
             command=(
-                "if command -v apt-get &>/dev/null; then"
-                "  export DEBIAN_FRONTEND=noninteractive;"
-                "  apt-get update -qq &&"
-                "  apt-get install -y --no-install-recommends curl git nodejs npm;"
-                " elif command -v apk &>/dev/null; then"
-                "  apk add --no-cache curl git nodejs npm;"
-                " elif command -v yum &>/dev/null; then"
-                "  yum install -y curl git nodejs npm;"
-                " fi"
+                "set -euo pipefail; "
+                "if command -v apt-get &>/dev/null; then "
+                "  export DEBIAN_FRONTEND=noninteractive; "
+                "  apt-get update -qq; "
+                "  apt-get install -y --no-install-recommends curl git ca-certificates gnupg; "
+                # NodeSource repo for Node 20 LTS
+                "  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -; "
+                "  apt-get install -y --no-install-recommends nodejs; "
+                "elif command -v apk &>/dev/null; then "
+                "  apk add --no-cache curl git nodejs npm; "
+                "elif command -v yum &>/dev/null; then "
+                "  yum install -y curl git nodejs npm; "
+                "fi; "
+                "node --version; npm --version"
             ),
             env={"DEBIAN_FRONTEND": "noninteractive"},
         )
 
-        # ── 2. Install claude-code (agent user) ─────────────────────────────
+        # ── 2. Install claude-code (agent user) ────────────────────────────
         await self.exec_as_agent(
             environment,
             command=(
@@ -74,35 +78,52 @@ class GitgangAgent(BaseInstalledAgent):
             env={"ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY", "")},
         )
 
-        # ── 3. Clone + build gitgang (root for /opt write access) ───────────
+        # ── 3. Clone gitgang ────────────────────────────────────────────────
         await self.exec_as_root(
             environment,
             command=(
                 "set -euo pipefail; "
                 "git clone --depth 1 https://github.com/jroell/gitgang.git /opt/gitgang && "
-                "cd /opt/gitgang && "
-                # Skip postinstall (ensure-clis.mjs checks for all three CLIs)
-                "npm ci --ignore-scripts --omit=optional && "
-                "npm run build && "
-                "chmod +x dist/cli.js"
+                "echo 'Clone OK'"
             ),
         )
 
-        # ── 4. Make gitgang available on PATH ───────────────────────────────
+        # ── 4. Install npm deps + build (separate step for clearer errors) ──
+        await self.exec_as_root(
+            environment,
+            command=(
+                "set -euo pipefail; "
+                "cd /opt/gitgang && "
+                # --ignore-scripts skips postinstall (ensure-clis.mjs requires all 3 CLIs)
+                "npm ci --ignore-scripts 2>&1 && "
+                "echo 'npm ci OK'"
+            ),
+        )
+
+        await self.exec_as_root(
+            environment,
+            command=(
+                "set -euo pipefail; "
+                "cd /opt/gitgang && "
+                "npm run build 2>&1 && "
+                "chmod +x dist/cli.js && "
+                "echo 'Build OK'"
+            ),
+        )
+
+        # ── 5. Symlink onto PATH ────────────────────────────────────────────
         await self.exec_as_root(
             environment,
             command=(
                 "ln -sf /opt/gitgang/dist/cli.js /usr/local/bin/gitgang && "
-                "chmod +x /usr/local/bin/gitgang"
+                "chmod +x /usr/local/bin/gitgang && "
+                "node /opt/gitgang/dist/cli.js --version && "
+                "echo 'Symlink OK'"
             ),
         )
 
     def populate_context_post_run(self, context: AgentContext) -> None:
-        # gitgang doesn't emit ATIF; capture basic token info if available
-        output_path = self.logs_dir / "gitgang.txt"
-        if not output_path.exists():
-            return
-        # Nothing to parse for now — extend later to extract claude token counts
+        # gitgang doesn't emit ATIF yet; extend later to parse claude token counts
         pass
 
     @with_prompt_template
@@ -113,32 +134,26 @@ class GitgangAgent(BaseInstalledAgent):
 
         env = {
             "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY", ""),
-            # Tell claude-code it's running in a sandboxed env (bypass permissions)
             "IS_SANDBOX": "1",
             "FORCE_AUTO_BACKGROUND_TASKS": "1",
             "ENABLE_BACKGROUND_TASKS": "1",
-            # Prevent gitgang from timing out too aggressively
-            "GITGANG_AGENT_IDLE_TIMEOUT": "600000",  # 10 min idle timeout
+            # 10-min idle timeout for claude inside gitgang
+            "GITGANG_AGENT_IDLE_TIMEOUT": "600000",
         }
-
-        # Remove empty values so the container's own env can take precedence
         env = {k: v for k, v in env.items() if v}
 
-        # Pass model name through if set
+        model_flag = ""
         if self.model_name:
             model = self.model_name.split("/")[-1]
-            model_flag = f"--model-claude {shlex.quote(model)}"
-        else:
-            model_flag = ""
+            model_flag = f"--model-claude {shlex.quote(model)} "
 
         await self.exec_as_agent(
             environment,
             command=(
-                # Ensure git config so gitgang can commit inside worktrees
+                # Global git config so gitgang can commit inside worktrees
                 'git config --global user.email "agent@benchmark.local" 2>/dev/null || true; '
                 'git config --global user.name "agent" 2>/dev/null || true; '
-                # Initialise a git repo in the CWD if there isn't one already
-                # (some terminal-bench tasks start without a repo)
+                # Init a git repo if the task env doesn't have one already
                 "if ! git rev-parse --git-dir &>/dev/null; then "
                 "  git init -q && "
                 "  git add -A 2>/dev/null || true && "
@@ -146,7 +161,7 @@ class GitgangAgent(BaseInstalledAgent):
                 "fi; "
                 # Run gitgang in solo claude mode
                 'export PATH="$HOME/.local/bin:$PATH"; '
-                f"gitgang --solo claude --yolo --no-pr {model_flag} "
+                f"gitgang --solo claude --yolo --no-pr {model_flag}"
                 f"-- {escaped_instruction} "
                 f"2>&1 | tee /logs/agent/gitgang.txt"
             ),
