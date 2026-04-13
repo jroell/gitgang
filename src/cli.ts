@@ -741,10 +741,13 @@ function parseFirstJson(s: string) {
   }
 }
 
-async function ensureDependencies(autoPR: boolean) {
+async function ensureDependencies(autoPR: boolean, activeAgents: AgentId[] = AGENT_IDS) {
   const missing: string[] = [];
 
-  for (const bin of REQUIRED_BINARIES) {
+  // Always require git; only require the CLI binaries for active agents
+  const requiredBins: string[] = ["git", ...activeAgents];
+
+  for (const bin of requiredBins) {
     const result = await runCommand(["which", bin]);
     if (result.exitCode !== 0) {
       missing.push(bin);
@@ -773,7 +776,7 @@ async function ensureDependencies(autoPR: boolean) {
 }
 
 async function prepareRuntime(opts: Opts) {
-  const depResult = await ensureDependencies(opts.autoPR);
+  const depResult = await ensureDependencies(opts.autoPR, opts.activeAgents);
   return { autoPR: depResult.autoPR };
 }
 
