@@ -34,3 +34,13 @@ Thumbs.db
 *.tmp
 tmp/
 temp/
+
+# Python cache (benchmarks/harbor)
+__pycache__/
+*.pyc
+
+# Benchmark runtime artifacts
+benchmarks/harbor/jobs/
+
+# Loose patch files
+*.patch

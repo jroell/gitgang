@@ -1,0 +1,38 @@
+{
+  "startedAt": "2026-04-07T19:27:48.072Z",
+  "durationMs": 900118,
+  "tasks": [
+    {
+      "id": "030-primeSieve",
+      "title": "primeSieve",
+      "category": "numerical",
+      "difficulty": "easy",
+      "expectedToStump": false,
+      "durationMs": 900061,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260407-152748-018968",
+        "claude": "agents/claude/20260407-152748-e236b4",
+        "codex": "agents/codex/20260407-152748-702ca9"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "git worktree add -q /tmp/gg-verify-030-primeSieve-RETkgt agents/gemini/20260407-152748-018968 failed: fatal: 'agents/gemini/20260407-152748-018968' is already used by worktree at '/private/tmp/gg-bench-run-030-primeSieve-rPKwuW/.ai-worktrees/gemini-agents_gemini_20260407-152748-018968'\n"
+        },
+        "claude": {
+          "pass": false,
+          "error": "git worktree add -q /tmp/gg-verify-030-primeSieve-yFrzeR agents/claude/20260407-152748-e236b4 failed: fatal: 'agents/claude/20260407-152748-e236b4' is already used by worktree at '/private/tmp/gg-bench-run-030-primeSieve-rPKwuW/.ai-worktrees/claude-agents_claude_20260407-152748-e236b4'\n"
+        },
+        "codex": {
+          "pass": false,
+          "error": "git worktree add -q /tmp/gg-verify-030-primeSieve-O3ZN0f agents/codex/20260407-152748-702ca9 failed: fatal: 'agents/codex/20260407-152748-702ca9' is already used by worktree at '/private/tmp/gg-bench-run-030-primeSieve-rPKwuW/.ai-worktrees/codex-agents_codex_20260407-152748-702ca9'\n"
+        }
+      },
+      "merged": {
+        "pass": false,
+        "error": "branch not found"
+      }
+    }
+  ]
+}

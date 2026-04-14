@@ -1,0 +1,1557 @@
+{
+  "startedAt": "2026-04-07T23:22:00.432Z",
+  "durationMs": 100676194,
+  "tasks": [
+    {
+      "id": "001-longestZigzag",
+      "title": "longestZigzag",
+      "category": "algorithms",
+      "difficulty": "medium",
+      "expectedToStump": false,
+      "durationMs": 2010548,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260407-192200-c88f0d",
+        "claude": "agents/claude/20260407-192200-a218d7",
+        "codex": "agents/codex/20260407-192200-9c504e"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.longestZigzag is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.longestZigzag is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "002-kSmallestPairSums",
+      "title": "kSmallestPairSums",
+      "category": "algorithms",
+      "difficulty": "hard",
+      "expectedToStump": true,
+      "durationMs": 2010320,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260407-195531-514e9a",
+        "claude": "agents/claude/20260407-195531-b7fe56",
+        "codex": "agents/codex/20260407-195531-f086d5"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.kSmallestPairSums is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.kSmallestPairSums is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "003-wordLadderLength",
+      "title": "wordLadderLength",
+      "category": "algorithms",
+      "difficulty": "hard",
+      "expectedToStump": true,
+      "durationMs": 2010403,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260407-202901-b22988",
+        "claude": "agents/claude/20260407-202901-142ea1",
+        "codex": "agents/codex/20260407-202901-5c54ad"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.wordLadderLength is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.wordLadderLength is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "004-minMeetingRooms",
+      "title": "minMeetingRooms",
+      "category": "algorithms",
+      "difficulty": "medium",
+      "expectedToStump": false,
+      "durationMs": 2010378,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260407-210231-36e765",
+        "claude": "agents/claude/20260407-210232-35eeac",
+        "codex": "agents/codex/20260407-210232-ecf53f"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.minMeetingRooms is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.minMeetingRooms is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "005-trapRainWater",
+      "title": "trapRainWater",
+      "category": "algorithms",
+      "difficulty": "hard",
+      "expectedToStump": true,
+      "durationMs": 2010313,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260407-213602-f80a41",
+        "claude": "agents/claude/20260407-213602-e79448",
+        "codex": "agents/codex/20260407-213602-521913"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.trapRainWater is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.trapRainWater is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "006-editDistance",
+      "title": "editDistance",
+      "category": "algorithms",
+      "difficulty": "medium",
+      "expectedToStump": false,
+      "durationMs": 2010374,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260407-220932-ba4322",
+        "claude": "agents/claude/20260407-220932-5714f1",
+        "codex": "agents/codex/20260407-220932-41fb63"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.editDistance is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.editDistance is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "007-longestValidParens",
+      "title": "longestValidParens",
+      "category": "algorithms",
+      "difficulty": "hard",
+      "expectedToStump": true,
+      "durationMs": 2010556,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260407-224303-aaa8ff",
+        "claude": "agents/claude/20260407-224303-f12243",
+        "codex": "agents/codex/20260407-224303-8e471d"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.longestValidParens is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.longestValidParens is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "008-medianOfTwoSorted",
+      "title": "medianOfTwoSorted",
+      "category": "algorithms",
+      "difficulty": "hard",
+      "expectedToStump": true,
+      "durationMs": 2010354,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260407-231633-394913",
+        "claude": "agents/claude/20260407-231633-86fbb5",
+        "codex": "agents/codex/20260407-231633-ecd1b3"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.medianOfTwoSorted is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.medianOfTwoSorted is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "009-maxProfitK",
+      "title": "maxProfitK",
+      "category": "algorithms",
+      "difficulty": "hard",
+      "expectedToStump": true,
+      "durationMs": 2010310,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260407-235004-f7d2f4",
+        "claude": "agents/claude/20260407-235004-0c2161",
+        "codex": "agents/codex/20260407-235004-cb8a6b"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.maxProfitK is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.maxProfitK is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "010-nQueensCount",
+      "title": "nQueensCount",
+      "category": "algorithms",
+      "difficulty": "medium",
+      "expectedToStump": false,
+      "durationMs": 2065183,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-002334-aa0be0",
+        "claude": "agents/claude/20260408-002334-cfc179",
+        "codex": "agents/codex/20260408-002334-d1acae"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.nQueensCount is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.nQueensCount is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "011-lruCache",
+      "title": "lruCache",
+      "category": "data-structures",
+      "difficulty": "medium",
+      "expectedToStump": false,
+      "durationMs": 2010270,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-005759-598ccf",
+        "claude": "agents/claude/20260408-005759-a2f6c0",
+        "codex": "agents/codex/20260408-005759-97a1c8"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.LRUCache is not a constructor"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.LRUCache is not a constructor"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "012-medianStream",
+      "title": "medianStream",
+      "category": "data-structures",
+      "difficulty": "hard",
+      "expectedToStump": true,
+      "durationMs": 2010324,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-013130-8ff289",
+        "claude": "agents/claude/20260408-013130-c319b9",
+        "codex": "agents/codex/20260408-013130-d7c3ed"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.MedianStream is not a constructor"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.MedianStream is not a constructor"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "013-unionFind",
+      "title": "unionFind",
+      "category": "data-structures",
+      "difficulty": "medium",
+      "expectedToStump": false,
+      "durationMs": 2010334,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-020500-3259a7",
+        "claude": "agents/claude/20260408-020500-28a882",
+        "codex": "agents/codex/20260408-020500-9f5b3d"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.UnionFind is not a constructor"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.UnionFind is not a constructor"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "014-trieAutocomplete",
+      "title": "trieAutocomplete",
+      "category": "data-structures",
+      "difficulty": "medium",
+      "expectedToStump": false,
+      "durationMs": 2010373,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-023830-7f10cb",
+        "claude": "agents/claude/20260408-023830-560ecb",
+        "codex": "agents/codex/20260408-023830-5002c7"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.Trie is not a constructor"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.Trie is not a constructor"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "015-skiplistSet",
+      "title": "skiplistSet",
+      "category": "data-structures",
+      "difficulty": "hard",
+      "expectedToStump": true,
+      "durationMs": 2107886,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-031201-560ec6",
+        "claude": "agents/claude/20260408-031201-a4654b",
+        "codex": "agents/codex/20260408-031201-f67db3"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.OrderedSet is not a constructor"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.OrderedSet is not a constructor"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "016-promisePool",
+      "title": "promisePool",
+      "category": "concurrency",
+      "difficulty": "hard",
+      "expectedToStump": true,
+      "durationMs": 2010313,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-034709-4e0b93",
+        "claude": "agents/claude/20260408-034709-4f9056",
+        "codex": "agents/codex/20260408-034709-bccc80"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.promisePool is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.promisePool is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "017-debounceAsync",
+      "title": "debounceAsync",
+      "category": "concurrency",
+      "difficulty": "medium",
+      "expectedToStump": false,
+      "durationMs": 2010331,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-042039-55b1e3",
+        "claude": "agents/claude/20260408-042039-41fb65",
+        "codex": "agents/codex/20260408-042039-b535b3"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.debounceAsync is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.debounceAsync is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "018-asyncSemaphore",
+      "title": "asyncSemaphore",
+      "category": "concurrency",
+      "difficulty": "medium",
+      "expectedToStump": false,
+      "durationMs": 2010316,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-045409-389341",
+        "claude": "agents/claude/20260408-045409-db6a6a",
+        "codex": "agents/codex/20260408-045409-4ee944"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.Semaphore is not a constructor"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.Semaphore is not a constructor"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "019-retryBackoff",
+      "title": "retryBackoff",
+      "category": "concurrency",
+      "difficulty": "medium",
+      "expectedToStump": false,
+      "durationMs": 2010352,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-052740-c578ba",
+        "claude": "agents/claude/20260408-052740-0d92cc",
+        "codex": "agents/codex/20260408-052740-63ef56"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.retryBackoff is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.retryBackoff is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "020-asyncQueue",
+      "title": "asyncQueue",
+      "category": "concurrency",
+      "difficulty": "hard",
+      "expectedToStump": true,
+      "durationMs": 2010365,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-060110-4c2c4c",
+        "claude": "agents/claude/20260408-060110-c81290",
+        "codex": "agents/codex/20260408-060110-76c2f5"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.AsyncQueue is not a constructor"
+        },
+        "claude": {
+          "pass": false,
+          "error": "m.AsyncQueue is not a constructor"
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.AsyncQueue is not a constructor"
+        }
+      },
+      "merged": {
+        "pass": false,
+        "error": "branch not found"
+      }
+    },
+    {
+      "id": "021-cancelToken",
+      "title": "cancelToken",
+      "category": "concurrency",
+      "difficulty": "hard",
+      "expectedToStump": true,
+      "durationMs": 2010331,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-063441-f0628b",
+        "claude": "agents/claude/20260408-063441-ea4265",
+        "codex": "agents/codex/20260408-063441-08570c"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.makeCancelable is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.makeCancelable is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "022-jsonParseStrict",
+      "title": "jsonParseStrict",
+      "category": "parsers",
+      "difficulty": "hard",
+      "expectedToStump": true,
+      "durationMs": 2010375,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-070811-e549fb",
+        "claude": "agents/claude/20260408-070811-649aac",
+        "codex": "agents/codex/20260408-070811-7adf8e"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.parseJsonStrict is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.parseJsonStrict is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "023-csvParse",
+      "title": "csvParse",
+      "category": "parsers",
+      "difficulty": "medium",
+      "expectedToStump": false,
+      "durationMs": 2010356,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-074141-1b5176",
+        "claude": "agents/claude/20260408-074141-7211b5",
+        "codex": "agents/codex/20260408-074141-f6a953"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.parseCsv is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.parseCsv is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "024-exprEval",
+      "title": "exprEval",
+      "category": "parsers",
+      "difficulty": "hard",
+      "expectedToStump": true,
+      "durationMs": 2010395,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-081512-f18ff4",
+        "claude": "agents/claude/20260408-081512-d03c24",
+        "codex": "agents/codex/20260408-081512-56930d"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.evalExpr is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.evalExpr is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "025-iniParse",
+      "title": "iniParse",
+      "category": "parsers",
+      "difficulty": "medium",
+      "expectedToStump": false,
+      "durationMs": 2010381,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-084842-292a5f",
+        "claude": "agents/claude/20260408-084842-6a025e",
+        "codex": "agents/codex/20260408-084842-947d8d"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.parseIni is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.parseIni is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "026-semverCmp",
+      "title": "semverCmp",
+      "category": "parsers",
+      "difficulty": "hard",
+      "expectedToStump": true,
+      "durationMs": 2010320,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-092213-ef0b29",
+        "claude": "agents/claude/20260408-092213-093567",
+        "codex": "agents/codex/20260408-092213-03aaed"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.semverCmp is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.semverCmp is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "027-sqrtNewton",
+      "title": "sqrtNewton",
+      "category": "numerical",
+      "difficulty": "medium",
+      "expectedToStump": false,
+      "durationMs": 2010360,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-095543-da74eb",
+        "claude": "agents/claude/20260408-095543-daa0fd",
+        "codex": "agents/codex/20260408-095543-edff85"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.sqrtNewton is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.sqrtNewton is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "028-matMul",
+      "title": "matMul",
+      "category": "numerical",
+      "difficulty": "medium",
+      "expectedToStump": false,
+      "durationMs": 2010390,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-102913-0a303d",
+        "claude": "agents/claude/20260408-102914-fc5b2b",
+        "codex": "agents/codex/20260408-102914-ce532e"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.matMul is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.matMul is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "029-bigIntFactorial",
+      "title": "bigIntFactorial",
+      "category": "numerical",
+      "difficulty": "easy",
+      "expectedToStump": false,
+      "durationMs": 2010342,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-110244-9dff51",
+        "claude": "agents/claude/20260408-110244-4208a9",
+        "codex": "agents/codex/20260408-110244-3a31ac"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.factorial is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.factorial is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "030-primeSieve",
+      "title": "primeSieve",
+      "category": "numerical",
+      "difficulty": "easy",
+      "expectedToStump": false,
+      "durationMs": 2010358,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-113614-72b8c0",
+        "claude": "agents/claude/20260408-113614-376986",
+        "codex": "agents/codex/20260408-113614-8ee8d9"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.primesUpTo is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.primesUpTo is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "031-compactArr",
+      "title": "compactArr",
+      "category": "tricky-spec",
+      "difficulty": "hard",
+      "expectedToStump": true,
+      "durationMs": 2010221,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-120945-91d534",
+        "claude": "agents/claude/20260408-120945-9bdd57",
+        "codex": "agents/codex/20260408-120945-f1f9a7"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.compact is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.compact is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "032-deepEqual",
+      "title": "deepEqual",
+      "category": "tricky-spec",
+      "difficulty": "hard",
+      "expectedToStump": true,
+      "durationMs": 2010440,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-124315-c21ea9",
+        "claude": "agents/claude/20260408-124315-67a353",
+        "codex": "agents/codex/20260408-124315-f66a7a"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.deepEqual is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.deepEqual is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "033-rateLimiter",
+      "title": "rateLimiter",
+      "category": "tricky-spec",
+      "difficulty": "hard",
+      "expectedToStump": true,
+      "durationMs": 2010405,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-131646-bca8cd",
+        "claude": "agents/claude/20260408-131646-5e6e8b",
+        "codex": "agents/codex/20260408-131646-4eef4b"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.RateLimiter is not a constructor"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.RateLimiter is not a constructor"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "034-dateAddBizDays",
+      "title": "dateAddBizDays",
+      "category": "tricky-spec",
+      "difficulty": "hard",
+      "expectedToStump": true,
+      "durationMs": 2010406,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-135016-6719eb",
+        "claude": "agents/claude/20260408-135016-ade179",
+        "codex": "agents/codex/20260408-135016-cad920"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.addBusinessDays is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.addBusinessDays is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "035-mergeIntervals",
+      "title": "mergeIntervals",
+      "category": "tricky-spec",
+      "difficulty": "medium",
+      "expectedToStump": false,
+      "durationMs": 2010387,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-142346-fa3b20",
+        "claude": "agents/claude/20260408-142346-982685",
+        "codex": "agents/codex/20260408-142346-599999"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.mergeIntervals is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.mergeIntervals is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "036-groupBy",
+      "title": "groupBy",
+      "category": "refactor",
+      "difficulty": "easy",
+      "expectedToStump": false,
+      "durationMs": 2010415,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-145717-82212f",
+        "claude": "agents/claude/20260408-145717-f01905",
+        "codex": "agents/codex/20260408-145717-9e2a75"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.groupBy is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.groupBy is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "037-chunk",
+      "title": "chunk",
+      "category": "refactor",
+      "difficulty": "easy",
+      "expectedToStump": false,
+      "durationMs": 2010343,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-153047-9f1810",
+        "claude": "agents/claude/20260408-153047-2420b8",
+        "codex": "agents/codex/20260408-153047-41cc92"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.chunk is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.chunk is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "038-zip",
+      "title": "zip",
+      "category": "refactor",
+      "difficulty": "easy",
+      "expectedToStump": false,
+      "durationMs": 2010336,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-160418-778ae2",
+        "claude": "agents/claude/20260408-160418-9b5438",
+        "codex": "agents/codex/20260408-160418-31e84b"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.zip is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.zip is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "039-flattenDeep",
+      "title": "flattenDeep",
+      "category": "refactor",
+      "difficulty": "medium",
+      "expectedToStump": false,
+      "durationMs": 2010300,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-163748-916e6d",
+        "claude": "agents/claude/20260408-163748-eafae4",
+        "codex": "agents/codex/20260408-163748-92f283"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.flattenDeep is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.flattenDeep is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "040-memoize",
+      "title": "memoize",
+      "category": "refactor",
+      "difficulty": "medium",
+      "expectedToStump": false,
+      "durationMs": 2010485,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-171118-ef620d",
+        "claude": "agents/claude/20260408-171118-c82a9a",
+        "codex": "agents/codex/20260408-171118-fe5176"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.memoize is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.memoize is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "041-hmacLike",
+      "title": "hmacLike",
+      "category": "security",
+      "difficulty": "hard",
+      "expectedToStump": true,
+      "durationMs": 2010413,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-174449-77eef2",
+        "claude": "agents/claude/20260408-174449-cf4b68",
+        "codex": "agents/codex/20260408-174449-ff193a"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.constantTimeEqual is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.constantTimeEqual is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "042-sanitizeHtml",
+      "title": "sanitizeHtml",
+      "category": "security",
+      "difficulty": "hard",
+      "expectedToStump": true,
+      "durationMs": 2010455,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-181819-5fda0d",
+        "claude": "agents/claude/20260408-181819-cedb51",
+        "codex": "agents/codex/20260408-181819-f0ed63"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.escapeHtml is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.escapeHtml is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "043-passwordStrength",
+      "title": "passwordStrength",
+      "category": "security",
+      "difficulty": "medium",
+      "expectedToStump": false,
+      "durationMs": 2010537,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-185150-c1ff32",
+        "claude": "agents/claude/20260408-185150-dbeca3",
+        "codex": "agents/codex/20260408-185150-b21563"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.passwordStrength is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.passwordStrength is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "044-urlSafePath",
+      "title": "urlSafePath",
+      "category": "security",
+      "difficulty": "hard",
+      "expectedToStump": true,
+      "durationMs": 2010623,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-192521-df86e0",
+        "claude": "agents/claude/20260408-192521-164941",
+        "codex": "agents/codex/20260408-192521-2bc382"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.safeJoin is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.safeJoin is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "045-graphemeCount",
+      "title": "graphemeCount",
+      "category": "unicode",
+      "difficulty": "hard",
+      "expectedToStump": true,
+      "durationMs": 2010447,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-195851-3158c2",
+        "claude": "agents/claude/20260408-195851-7789d3",
+        "codex": "agents/codex/20260408-195851-2b0db1"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.graphemeCount is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.graphemeCount is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "046-slugify",
+      "title": "slugify",
+      "category": "unicode",
+      "difficulty": "medium",
+      "expectedToStump": false,
+      "durationMs": 2010425,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-203222-d45f64",
+        "claude": "agents/claude/20260408-203222-702feb",
+        "codex": "agents/codex/20260408-203222-8fe8a8"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.slugify is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.slugify is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "047-reverseUnicodeSafe",
+      "title": "reverseUnicodeSafe",
+      "category": "unicode",
+      "difficulty": "hard",
+      "expectedToStump": true,
+      "durationMs": 2010637,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-210552-3179d8",
+        "claude": "agents/claude/20260408-210552-8477f8",
+        "codex": "agents/codex/20260408-210552-cf9e2b"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.reverseString is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.reverseString is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "048-topologicalSort",
+      "title": "topologicalSort",
+      "category": "algorithms",
+      "difficulty": "hard",
+      "expectedToStump": true,
+      "durationMs": 2011177,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-213923-058a51",
+        "claude": "agents/claude/20260408-213923-2a1d37",
+        "codex": "agents/codex/20260408-213923-24be1d"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.topoSort is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.topoSort is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "049-diffLines",
+      "title": "diffLines",
+      "category": "algorithms",
+      "difficulty": "hard",
+      "expectedToStump": true,
+      "durationMs": 2011258,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-221255-6b7af4",
+        "claude": "agents/claude/20260408-221255-06cece",
+        "codex": "agents/codex/20260408-221255-62de53"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.diffLines is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.diffLines is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    },
+    {
+      "id": "050-stableSortBy",
+      "title": "stableSortBy",
+      "category": "algorithms",
+      "difficulty": "medium",
+      "expectedToStump": false,
+      "durationMs": 2010504,
+      "gitgangExit": 1,
+      "branches": {
+        "gemini": "agents/gemini/20260408-224626-ca5df3",
+        "claude": "agents/claude/20260408-224626-e7abac",
+        "codex": "agents/codex/20260408-224626-db4d78"
+      },
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "m.stableSortBy is not a function"
+        },
+        "claude": {
+          "pass": true
+        },
+        "codex": {
+          "pass": false,
+          "error": "m.stableSortBy is not a function"
+        }
+      },
+      "merged": {
+        "pass": true,
+        "fallbackAgent": "claude"
+      }
+    }
+  ]
+}

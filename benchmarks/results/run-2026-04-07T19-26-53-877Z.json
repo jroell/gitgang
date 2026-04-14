@@ -1,0 +1,34 @@
+{
+  "startedAt": "2026-04-07T19:26:53.556Z",
+  "durationMs": 322,
+  "tasks": [
+    {
+      "id": "030-primeSieve",
+      "title": "primeSieve",
+      "category": "numerical",
+      "difficulty": "easy",
+      "expectedToStump": false,
+      "durationMs": 268,
+      "gitgangExit": 1,
+      "branches": {},
+      "agents": {
+        "gemini": {
+          "pass": false,
+          "error": "branch not found"
+        },
+        "claude": {
+          "pass": false,
+          "error": "branch not found"
+        },
+        "codex": {
+          "pass": false,
+          "error": "branch not found"
+        }
+      },
+      "merged": {
+        "pass": false,
+        "error": "branch not found"
+      }
+    }
+  ]
+}
