@@ -24,6 +24,7 @@ import ora from "ora";
 import { renderSidebar } from "./sidebar.js";
 import { runDoctor, runDoctorJson } from "./doctor.js";
 import { generateCompletionScript } from "./completions.js";
+import { loadConfig, runInit } from "./config.js";
 import {
   runRepl,
   createRealFanOut,
@@ -941,6 +942,11 @@ function parseArgs(raw: string[]) {
     const json = raw.includes("--json");
     return { subcommand: { kind: "doctor", json } } as unknown as ParsedArgs;
   }
+  // Init subcommand — scaffold .gitgang/config.json
+  if (raw[0] === "init") {
+    const force = raw.includes("--force") || raw.includes("-f");
+    return { subcommand: { kind: "init", force } } as unknown as ParsedArgs;
+  }
   // Completions subcommand — emit a shell completion script.
   if (raw[0] === "completions") {
     const shell = raw[1];
@@ -1216,7 +1222,8 @@ interface ParsedArgs {
     | { kind: "sessions_search"; query: string; limit: number }
     | { kind: "sessions_stats"; id: string; json?: boolean }
     | { kind: "doctor"; json?: boolean }
-    | { kind: "completions"; shell: "bash" | "zsh" | "fish" };
+    | { kind: "completions"; shell: "bash" | "zsh" | "fish" }
+    | { kind: "init"; force: boolean };
 }
 
 export function normalizeParsedArgs(parsed: ParsedArgs): ParsedArgs {
@@ -2706,6 +2713,21 @@ export async function dispatchMain(parsed: ParsedArgs): Promise<number> {
     process.stdout.write(generateCompletionScript(parsed.subcommand.shell));
     return 0;
   }
+  if (parsed.subcommand?.kind === "init") {
+    const repo = await repoRoot();
+    const { path, outcome } = runInit(repo, parsed.subcommand.force);
+    if (outcome === "exists") {
+      process.stderr.write(
+        `${path} already exists. Re-run with --force to overwrite.\n`,
+      );
+      return 1;
+    }
+    process.stdout.write(
+      `${outcome === "overwritten" ? "Overwrote" : "Created"} ${path}\n` +
+        "Edit this file to set per-repo defaults (automerge, reviewer, models).\n",
+    );
+    return 0;
+  }
   if (parsed.interactive) {
     return runInteractive(parsed);
   }
@@ -2714,6 +2736,7 @@ export async function dispatchMain(parsed: ParsedArgs): Promise<number> {
 
 async function runInteractive(parsed: ParsedArgs): Promise<number> {
   const repo = await repoRoot();
+  const fileConfig = loadConfig(repo);
   try {
     await ensureCleanTree(repo);
   } catch (err) {
@@ -2735,7 +2758,7 @@ async function runInteractive(parsed: ParsedArgs): Promise<number> {
     const created = createSession(sessionsRoot, {
       models,
       reviewer: parsed.reviewerAgent ?? "codex",
-      automerge: parsed.automerge ?? "ask",
+      automerge: parsed.automerge ?? fileConfig.automerge ?? "ask",
     });
     session = loadSession(created.dir);
   }
