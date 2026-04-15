@@ -186,3 +186,37 @@ export function reconstructHistory(
   }
   return result;
 }
+
+/**
+ * Find the most recent orchestrator event that proposed a merge plan but
+ * has no corresponding `merge` event with outcome "merged" yet. Used by
+ * the /merge slash command to apply a previously-declined plan.
+ */
+export function findPendingMergePlan(
+  events: SessionEvent[],
+): { turn: number; plan: NonNullable<OrchestratorOutput["mergePlan"]> } | null {
+  const mergedTurns = new Set(
+    events.filter((e) => e.type === "merge" && e.outcome === "merged").map((e) => e.turn),
+  );
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.type !== "orchestrator") continue;
+    const plan = e.payload.mergePlan;
+    if (!plan) continue;
+    if (mergedTurns.has(e.turn)) continue;
+    return { turn: e.turn, plan };
+  }
+  return null;
+}
+
+/**
+ * Find the most recent successfully-merged branch from the session log.
+ * Used by /pr to know which branch to open a PR for.
+ */
+export function findLastMergedBranch(events: SessionEvent[]): string | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.type === "merge" && e.outcome === "merged" && e.branch) return e.branch;
+  }
+  return null;
+}

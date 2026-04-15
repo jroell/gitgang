@@ -30,7 +30,15 @@ import {
   type ExecuteTurnDeps,
 } from "./repl.js";
 import type { MergePlan as OrchestratorMergePlan } from "./orchestrator.js";
-import { createSession, loadSession, type LoadedSession, type SessionEvent } from "./session.js";
+import {
+  createSession,
+  loadSession,
+  appendEvent,
+  findPendingMergePlan,
+  findLastMergedBranch,
+  type LoadedSession,
+  type SessionEvent,
+} from "./session.js";
 
 const VERSION = "1.7.0";
 const REQUIRED_BINARIES = ["git", "gemini", "claude", "codex"] as const;
@@ -2673,10 +2681,69 @@ async function runInteractive(parsed: ParsedArgs): Promise<number> {
       }
     },
     runMergeCommand: async () => {
-      process.stdout.write("(/merge not yet implemented — see v1.7.1)\n");
+      const pending = findPendingMergePlan(session.events);
+      if (!pending) {
+        process.stdout.write(
+          "No pending merge plan to apply. Use /code to request a merge first.\n",
+        );
+        return;
+      }
+      process.stdout.write(
+        `Applying pending plan from turn ${pending.turn} (pick: ${pending.plan.pick})...\n`,
+      );
+      try {
+        await applyInteractiveMergePlan(repo, baseBranch, pending.plan);
+        const mergeEvent: SessionEvent = {
+          ts: new Date().toISOString(),
+          turn: pending.turn,
+          type: "merge",
+          branch: pending.plan.branches[0] ?? "",
+          outcome: "merged",
+        };
+        appendEvent(session.logPath, mergeEvent);
+        session.events.push(mergeEvent);
+        process.stdout.write(`✓ Merged ${pending.plan.branches.join(", ")}.\n`);
+      } catch (err) {
+        process.stdout.write(
+          `✗ Merge failed: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      }
     },
     runPrCommand: async () => {
-      process.stdout.write("(/pr not yet implemented — see v1.7.1)\n");
+      const merged = findLastMergedBranch(session.events);
+      if (!merged) {
+        process.stdout.write(
+          "No merged branch in this session. Use /merge (or approve a merge prompt) first.\n",
+        );
+        return;
+      }
+      try {
+        const branch = await currentBranch(repo);
+        process.stdout.write(`Pushing ${branch} and opening PR...\n`);
+        await git(repo, "push", "-u", "origin", branch);
+        const ghProc = spawnProcess(["gh", "pr", "create", "--fill"], { cwd: repo });
+        const exitCode = await (ghProc as SpawnedProcess).exited;
+        if (exitCode !== 0) {
+          process.stdout.write(
+            `✗ gh pr create exited with code ${exitCode}. Is the gh CLI installed and authenticated?\n`,
+          );
+        } else {
+          const prMarkerEvent: SessionEvent = {
+            ts: new Date().toISOString(),
+            turn: 0,
+            type: "merge",
+            branch: merged,
+            outcome: "pr_only",
+          };
+          appendEvent(session.logPath, prMarkerEvent);
+          session.events.push(prMarkerEvent);
+          process.stdout.write("✓ PR created.\n");
+        }
+      } catch (err) {
+        process.stdout.write(
+          `✗ PR creation failed: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      }
     },
   });
 
