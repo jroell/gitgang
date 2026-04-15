@@ -85,18 +85,56 @@ export function appendEvent(logPath: string, event: SessionEvent): void {
 }
 
 export function readEvents(logPath: string): SessionEvent[] {
-  if (!existsSync(logPath)) return [];
+  return readEventsWithErrors(logPath).events;
+}
+
+export type ReadEventsResult = {
+  events: SessionEvent[];
+  errors: Array<{ lineNumber: number; raw: string; reason: string }>;
+};
+
+export function readEventsWithErrors(logPath: string): ReadEventsResult {
+  if (!existsSync(logPath)) return { events: [], errors: [] };
   const raw = readFileSync(logPath, "utf8");
-  const out: SessionEvent[] = [];
-  for (const line of raw.split("\n")) {
+  const events: SessionEvent[] = [];
+  const errors: ReadEventsResult["errors"] = [];
+  const lines = raw.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     if (!line.trim()) continue;
     try {
-      out.push(JSON.parse(line) as SessionEvent);
-    } catch {
-      // malformed line; skip
+      events.push(JSON.parse(line) as SessionEvent);
+    } catch (err) {
+      errors.push({
+        lineNumber: i + 1,
+        raw: line,
+        reason: err instanceof Error ? err.message : String(err),
+      });
     }
   }
-  return out;
+  return { events, errors };
+}
+
+/**
+ * Read events and, if any lines are malformed, append a diagnostic record
+ * to `<debugDir>/resume-errors.log`. Returns only the successfully-parsed
+ * events. Use this when loading a session for resume.
+ */
+export function readEventsLogged(logPath: string, debugDir: string): SessionEvent[] {
+  const { events, errors } = readEventsWithErrors(logPath);
+  if (errors.length === 0) return events;
+  try {
+    if (!existsSync(debugDir)) mkdirSync(debugDir, { recursive: true });
+    const ts = new Date().toISOString();
+    const header = `[${ts}] ${errors.length} malformed line(s) in ${logPath}\n`;
+    const body = errors
+      .map((e) => `  line ${e.lineNumber}: ${e.reason}\n    raw: ${e.raw}\n`)
+      .join("");
+    appendFileSync(join(debugDir, "resume-errors.log"), header + body + "\n");
+  } catch {
+    // best-effort; if we can't write the log, the event list is still valid
+  }
+  return events;
 }
 
 export type LoadedSession = {
@@ -113,14 +151,15 @@ export function loadSession(dir: string): LoadedSession {
   const metadataPath = join(dir, "metadata.json");
   const metadata: SessionMetadata = JSON.parse(readFileSync(metadataPath, "utf8"));
   const logPath = join(dir, "session.jsonl");
+  const debugDir = join(dir, "debug");
   return {
     id: metadata.id,
     dir,
     logPath,
-    debugDir: join(dir, "debug"),
+    debugDir,
     worktreesDir: join(dir, "worktrees"),
     metadata,
-    events: readEvents(logPath),
+    events: readEventsLogged(logPath, debugDir),
   };
 }
 
