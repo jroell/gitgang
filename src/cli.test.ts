@@ -1272,3 +1272,25 @@ describe("sessions search subcommand parsing", () => {
     });
   });
 });
+
+describe("sessions stats subcommand parsing", () => {
+  test("'sessions stats <id>' parses to subcommand", () => {
+    const p = parseArgs(["sessions", "stats", "abc123"]);
+    expect(p.subcommand).toEqual({
+      kind: "sessions_stats",
+      id: "abc123",
+    });
+  });
+
+  test("'sessions stats' without id throws helpful usage", () => {
+    expect(() => parseArgs(["sessions", "stats"])).toThrow(/usage:/);
+  });
+
+  test("usage message includes stats entry after show", () => {
+    try {
+      parseArgs(["sessions", "bogus"]);
+    } catch (e) {
+      expect((e as Error).message).toContain("gg sessions stats");
+    }
+  });
+});

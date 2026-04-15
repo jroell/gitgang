@@ -104,6 +104,7 @@ For questions, the turn ends with the synthesis. For code changes, the orchestra
     gg doctor                             # environment health check (binaries, env vars, git)
     gg sessions list                      # list recent sessions (with topic)
     gg sessions search <query>            # find sessions matching text (topic/answer)
+    gg sessions stats <id>                # show turn/agent/merge counts + duration for a session
     gg sessions delete <id> --yes         # remove a single session from disk
     gg sessions prune --older-than 30d    # dry-run list sessions older than duration
     gg sessions prune --older-than 30d -y # actually delete them
