@@ -4,8 +4,7 @@ import { randomBytes } from "node:crypto";
 import type { AgentId } from "./cli";
 import type { ForcedMode } from "./slash";
 
-// Temporary placeholder — replaced by Task 6 with: import type { OrchestratorOutput } from "./orchestrator";
-type OrchestratorOutput = unknown;
+import type { OrchestratorOutput } from "./orchestrator";
 
 export type Automerge = "on" | "off" | "ask";
 
