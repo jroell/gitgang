@@ -2564,6 +2564,14 @@ export async function dispatchMain(parsed: ParsedArgs): Promise<number> {
 
 async function runInteractive(parsed: ParsedArgs): Promise<number> {
   const repo = await repoRoot();
+  try {
+    await ensureCleanTree(repo);
+  } catch (err) {
+    process.stderr.write(`${(err as Error).message}\n`);
+    process.stderr.write("Commit or stash changes before starting an interactive session.\n");
+    return 1;
+  }
+  const baseBranch = await currentBranch(repo);
   const sessionsRoot = resolve(repo, ".gitgang", "sessions");
   mkdirSync(sessionsRoot, { recursive: true });
   const models = resolveModels();
@@ -2600,14 +2608,14 @@ async function runInteractive(parsed: ParsedArgs): Promise<number> {
   const executeTurnDeps: ExecuteTurnDeps = {
     session,
     repoRoot: repo,
-    base: "main",
+    base: baseBranch,
     output: process.stdout,
     mergeInput: process.stdin,
     fanOut,
     spawnOrchestrator,
     applyMerge: async (plan) => {
       try {
-        await applyInteractiveMergePlan(repo, "main", plan);
+        await applyInteractiveMergePlan(repo, baseBranch, plan);
         return { success: true };
       } catch (err) {
         return { success: false, error: (err as Error).message };
