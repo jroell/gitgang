@@ -24,6 +24,7 @@ export type ReplDeps = {
   runMergeCommand: () => Promise<void>;
   runPrCommand: () => Promise<void>;
   runDiffCommand: (target: DiffTarget) => Promise<void>;
+  runRedoCommand: () => Promise<void>;
 };
 
 export async function runRepl(deps: ReplDeps): Promise<void> {
@@ -67,6 +68,9 @@ export async function runRepl(deps: ReplDeps): Promise<void> {
         break;
       case "diff":
         await deps.runDiffCommand(cmd.target);
+        break;
+      case "redo":
+        await deps.runRedoCommand();
         break;
       case "unknown":
         deps.output.write(`Unknown command: ${cmd.raw}\n`);

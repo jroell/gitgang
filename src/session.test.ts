@@ -855,3 +855,63 @@ describe("formatSessionExport", () => {
     expect(formatSessionExport(events, META)).toBe(formatSessionExport(events, META));
   });
 });
+
+import { findLastUserMessage } from "./session";
+
+describe("findLastUserMessage", () => {
+  test("returns null on empty log", () => {
+    expect(findLastUserMessage([])).toBeNull();
+  });
+
+  test("returns null when no user events present", () => {
+    const events: SessionEvent[] = [
+      { ts: "t", turn: 1, type: "agent_start", agent: "gemini", branch: "b" },
+    ];
+    expect(findLastUserMessage(events)).toBeNull();
+  });
+
+  test("returns most recent user message verbatim", () => {
+    const events: SessionEvent[] = [
+      { ts: "t", turn: 1, type: "user", text: "first", forcedMode: null },
+      { ts: "t", turn: 2, type: "user", text: "second", forcedMode: "ask" },
+      { ts: "t", turn: 3, type: "user", text: "third", forcedMode: "code" },
+    ];
+    expect(findLastUserMessage(events)).toEqual({
+      text: "third",
+      forcedMode: "code",
+      turn: 3,
+    });
+  });
+
+  test("preserves original forcedMode and turn number", () => {
+    const events: SessionEvent[] = [
+      { ts: "t", turn: 1, type: "user", text: "explain auth", forcedMode: "ask" },
+      {
+        ts: "t",
+        turn: 1,
+        type: "orchestrator",
+        payload: { intent: "ask", agreement: [], disagreement: [], bestAnswer: "..." },
+      },
+    ];
+    const result = findLastUserMessage(events);
+    expect(result?.forcedMode).toBe("ask");
+    expect(result?.turn).toBe(1);
+  });
+
+  test("scans backwards — skips non-user events to find the user one", () => {
+    const events: SessionEvent[] = [
+      { ts: "t", turn: 1, type: "user", text: "hello", forcedMode: null },
+      { ts: "t", turn: 1, type: "agent_start", agent: "gemini", branch: "b" },
+      { ts: "t", turn: 1, type: "agent_end", agent: "gemini", status: "ok", diffSummary: "" },
+      {
+        ts: "t",
+        turn: 1,
+        type: "orchestrator",
+        payload: { intent: "ask", agreement: [], disagreement: [], bestAnswer: "y" },
+      },
+      { ts: "t", turn: 1, type: "merge", branch: "b", outcome: "merged" },
+    ];
+    const result = findLastUserMessage(events);
+    expect(result?.text).toBe("hello");
+  });
+});

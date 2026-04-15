@@ -113,3 +113,17 @@ describe("/diff", () => {
     });
   });
 });
+
+describe("/redo", () => {
+  test("/redo returns redo command", () => {
+    expect(parseSlashCommand("/redo")).toEqual({ kind: "redo" });
+  });
+  test("/redo ignores trailing whitespace", () => {
+    expect(parseSlashCommand("  /redo  ")).toEqual({ kind: "redo" });
+  });
+  test("/redo with extra args is still redo (args ignored)", () => {
+    // We could be strict here, but trailing args on argless commands is a
+    // common typo; just treat as redo.
+    expect(parseSlashCommand("/redo extra")).toEqual({ kind: "redo" });
+  });
+});

@@ -89,6 +89,7 @@ For questions, the turn ends with the synthesis. For code changes, the orchestra
     /merge         apply the previous turn's merge plan
     /pr            open a PR for the last merge
     /diff [agent]  show diff vs base for picked or named agent's branch
+    /redo          re-run the last user message as a fresh turn
     /history       print the transcript
     /agents        show the agent roster and models
     /set K V       set a runtime knob (e.g. /set automerge on)

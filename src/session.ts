@@ -514,3 +514,20 @@ export function formatSessionExport(
 
   return lines.join("\n");
 }
+
+/**
+ * Find the most recent user-typed message in the session log. Used by
+ * /redo to re-execute the prior turn with the same prompt and forced mode.
+ * Returns null when no user message has been logged yet.
+ */
+export function findLastUserMessage(
+  events: SessionEvent[],
+): { text: string; forcedMode: ForcedMode; turn: number } | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.type === "user") {
+      return { text: e.text, forcedMode: e.forcedMode, turn: e.turn };
+    }
+  }
+  return null;
+}
