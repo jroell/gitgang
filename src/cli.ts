@@ -902,6 +902,17 @@ function parseDuration(value: string): number | undefined {
 }
 
 function parseArgs(raw: string[]) {
+  // Sessions subcommand routing — must run before any other parsing.
+  if (raw[0] === "sessions") {
+    if (raw[1] === "list") {
+      return { subcommand: { kind: "sessions_list" } } as unknown as ParsedArgs;
+    }
+    if (raw[1] === "show" && raw[2]) {
+      return { subcommand: { kind: "sessions_show", id: raw[2] } } as unknown as ParsedArgs;
+    }
+    throw new Error("usage: gg sessions list | gg sessions show <id>");
+  }
+
   let task: string | undefined;
   let rounds = 3;
   let yolo = true;
@@ -914,6 +925,12 @@ function parseArgs(raw: string[]) {
   let postMergeChecks: string[] = [];
   let soloMode = false;
   let modelOverrides: Partial<Record<AgentId, string>> = {};
+  let interactive = false;
+  let interactiveExplicit = false;
+  let opener: string | undefined;
+  let resume: ParsedArgs["resume"] | undefined;
+  let automerge: ParsedArgs["automerge"] | undefined;
+  const positional: string[] = [];
 
   const bool = (v?: string) =>
     ["1", "true", "yes", "on"].includes((v || "").toLowerCase());
@@ -921,6 +938,26 @@ function parseArgs(raw: string[]) {
   for (let i = 0; i < raw.length; i++) {
     const token = raw[i];
     switch (token) {
+      case "-i":
+      case "--interactive":
+        interactive = true;
+        interactiveExplicit = true;
+        break;
+      case "--resume":
+        if (i + 1 < raw.length && !raw[i + 1].startsWith("-")) {
+          resume = { mode: "id", id: raw[++i] };
+        } else {
+          resume = { mode: "latest" };
+        }
+        break;
+      case "--automerge": {
+        if (i + 1 >= raw.length) throw new Error("--automerge requires on|off|ask");
+        const v = raw[++i];
+        if (v !== "on" && v !== "off" && v !== "ask")
+          throw new Error("--automerge must be one of: on, off, ask");
+        automerge = v;
+        break;
+      }
       case "--task":
         if (i + 1 >= raw.length) throw new Error("--task requires a value");
         task = raw[++i];
@@ -995,14 +1032,34 @@ function parseArgs(raw: string[]) {
         modelOverrides.codex = raw[++i];
         break;
       default:
-        if (!token.startsWith("-") && task === undefined) {
-          task = token;
+        if (!token.startsWith("-")) {
+          positional.push(token);
+          if (task === undefined) {
+            task = token;
+          }
         }
         break;
     }
   }
 
-  return normalizeParsedArgs({ task, rounds, yolo, workRoot, timeoutMs, autoPR, dryRun, activeAgents, reviewerAgent, postMergeChecks, soloMode, modelOverrides });
+  // If interactive was requested explicitly and positional args are present,
+  // treat them as the opener (not the one-shot task).
+  if (interactiveExplicit && positional.length > 0) {
+    opener = positional.join(" ");
+    task = undefined;
+  }
+
+  // Default-to-interactive: no task, no explicit mode, no positional args.
+  if (!interactive && !task && positional.length === 0) {
+    interactive = true;
+  }
+
+  const normalized = normalizeParsedArgs({ task, rounds, yolo, workRoot, timeoutMs, autoPR, dryRun, activeAgents, reviewerAgent, postMergeChecks, soloMode, modelOverrides });
+  normalized.interactive = interactive;
+  if (opener !== undefined) normalized.opener = opener;
+  if (resume !== undefined) normalized.resume = resume;
+  if (automerge !== undefined) normalized.automerge = automerge;
+  return normalized;
 }
 
 interface ParsedArgs {
@@ -1018,6 +1075,13 @@ interface ParsedArgs {
   postMergeChecks: string[];
   soloMode: boolean;
   modelOverrides?: Partial<Record<AgentId, string>>;
+  interactive?: boolean;
+  opener?: string;
+  resume?: { mode: "latest" } | { mode: "id"; id: string };
+  automerge?: "on" | "off" | "ask";
+  subcommand?:
+    | { kind: "sessions_list" }
+    | { kind: "sessions_show"; id: string };
 }
 
 export function normalizeParsedArgs(parsed: ParsedArgs): ParsedArgs {
