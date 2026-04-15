@@ -23,6 +23,7 @@ import chalk from "chalk";
 import ora from "ora";
 import { renderSidebar } from "./sidebar.js";
 import { runDoctor } from "./doctor.js";
+import { generateCompletionScript } from "./completions.js";
 import {
   runRepl,
   createRealFanOut,
@@ -939,6 +940,16 @@ function parseArgs(raw: string[]) {
   if (raw[0] === "doctor") {
     return { subcommand: { kind: "doctor" } } as unknown as ParsedArgs;
   }
+  // Completions subcommand — emit a shell completion script.
+  if (raw[0] === "completions") {
+    const shell = raw[1];
+    if (shell !== "bash" && shell !== "zsh" && shell !== "fish") {
+      throw new Error("usage: gg completions <bash|zsh|fish>");
+    }
+    return {
+      subcommand: { kind: "completions", shell },
+    } as unknown as ParsedArgs;
+  }
   // Sessions subcommand routing — must run before any other parsing.
   if (raw[0] === "sessions") {
     if (raw[1] === "list") {
@@ -1199,7 +1210,8 @@ interface ParsedArgs {
     | { kind: "sessions_prune"; olderThan: string; confirmed: boolean }
     | { kind: "sessions_search"; query: string; limit: number }
     | { kind: "sessions_stats"; id: string }
-    | { kind: "doctor" };
+    | { kind: "doctor" }
+    | { kind: "completions"; shell: "bash" | "zsh" | "fish" };
 }
 
 export function normalizeParsedArgs(parsed: ParsedArgs): ParsedArgs {
@@ -2679,6 +2691,10 @@ export async function dispatchMain(parsed: ParsedArgs): Promise<number> {
     const { report, exitCode } = runDoctor(process.cwd(), process.stdout.isTTY ?? false);
     process.stdout.write(report);
     return exitCode;
+  }
+  if (parsed.subcommand?.kind === "completions") {
+    process.stdout.write(generateCompletionScript(parsed.subcommand.shell));
+    return 0;
   }
   if (parsed.interactive) {
     return runInteractive(parsed);
