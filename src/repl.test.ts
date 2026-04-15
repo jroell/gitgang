@@ -631,3 +631,96 @@ describe("REPL /diff dispatch", () => {
     expect(outputText()).toContain("Unknown command");
   });
 });
+
+import { formatAgentLog } from "./repl";
+
+describe("formatAgentLog", () => {
+  test("emits all required fields with section dividers", () => {
+    const log = formatAgentLog({
+      agent: "claude",
+      model: "claude-opus-4-6",
+      turn: 3,
+      status: "ok",
+      exitCode: 0,
+      startedAt: "2026-04-15T01:00:00.000Z",
+      finishedAt: "2026-04-15T01:01:30.000Z",
+      durationMs: 90_000,
+      prompt: "the prompt body",
+      stdout: "agent stdout",
+      stderr: "",
+    });
+    expect(log).toContain("── gitgang agent log ──");
+    expect(log).toContain("agent: claude");
+    expect(log).toContain("model: claude-opus-4-6");
+    expect(log).toContain("turn: 3");
+    expect(log).toContain("status: ok");
+    expect(log).toContain("exit_code: 0");
+    expect(log).toContain("started_at: 2026-04-15T01:00:00.000Z");
+    expect(log).toContain("finished_at: 2026-04-15T01:01:30.000Z");
+    expect(log).toContain("duration_ms: 90000");
+    expect(log).toContain("── prompt ──\nthe prompt body");
+    expect(log).toContain("── stdout ──\nagent stdout");
+    expect(log).toContain("── stderr ──");
+  });
+
+  test("renders exit_code as em-dash when null (e.g. spawn failure)", () => {
+    const log = formatAgentLog({
+      agent: "gemini",
+      model: "gemini-3.1-pro-preview",
+      turn: 1,
+      status: "failed",
+      exitCode: null,
+      startedAt: "2026-04-15T01:00:00.000Z",
+      finishedAt: "2026-04-15T01:00:00.000Z",
+      durationMs: 0,
+      prompt: "(prompt not built; failed before spawn)",
+      stdout: "",
+      stderr: "ENOENT: gemini binary not found",
+    });
+    expect(log).toContain("exit_code: —");
+    expect(log).toContain("status: failed");
+    expect(log).toContain("ENOENT: gemini binary not found");
+  });
+
+  test("preserves multi-line stdout verbatim", () => {
+    const stdout = "line one\nline two\nline three";
+    const log = formatAgentLog({
+      agent: "codex",
+      model: "gpt-5.4",
+      turn: 1,
+      status: "ok",
+      exitCode: 0,
+      startedAt: "2026-04-15T01:00:00.000Z",
+      finishedAt: "2026-04-15T01:00:01.000Z",
+      durationMs: 1000,
+      prompt: "do the thing",
+      stdout,
+      stderr: "",
+    });
+    expect(log).toContain(stdout);
+  });
+
+  test("section order is fixed (header, fields, prompt, stdout, stderr)", () => {
+    const log = formatAgentLog({
+      agent: "claude",
+      model: "m",
+      turn: 1,
+      status: "ok",
+      exitCode: 0,
+      startedAt: "t1",
+      finishedAt: "t2",
+      durationMs: 1,
+      prompt: "p",
+      stdout: "s",
+      stderr: "e",
+    });
+    const headerIdx = log.indexOf("── gitgang agent log ──");
+    const promptIdx = log.indexOf("── prompt ──");
+    const stdoutIdx = log.indexOf("── stdout ──");
+    const stderrIdx = log.indexOf("── stderr ──");
+    expect(headerIdx).toBe(0);
+    expect(promptIdx).toBeGreaterThan(headerIdx);
+    expect(stdoutIdx).toBeGreaterThan(promptIdx);
+    expect(stderrIdx).toBeGreaterThan(stdoutIdx);
+  });
+});

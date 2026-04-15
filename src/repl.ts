@@ -421,7 +421,65 @@ export type RealFanOutConfig = {
   yolo: boolean;
   timeoutMs: number;
   repoRoot: string;
+  /**
+   * Optional. If set, each agent's full stdout, prompt, and status header
+   * is written to <logsDir>/turn-N/<agent>.log for post-hoc inspection.
+   * Worktree contents are deleted after the turn, but log files survive.
+   */
+  logsDir?: string;
 };
+
+/**
+ * Format the disk-archived log content for a single agent run. Pure function.
+ *
+ * Format:
+ *   ── gitgang agent log ──
+ *   agent: claude
+ *   model: claude-opus-4-6
+ *   turn: 3
+ *   status: ok|failed|timeout
+ *   exit_code: <number or "—">
+ *   started_at: <ISO timestamp>
+ *   finished_at: <ISO timestamp>
+ *   duration_ms: <number>
+ *   ── prompt ──
+ *   <prompt>
+ *   ── stdout ──
+ *   <full stdout>
+ *   ── stderr ──
+ *   <full stderr>
+ */
+export function formatAgentLog(params: {
+  agent: string;
+  model: string;
+  turn: number;
+  status: "ok" | "failed" | "timeout";
+  exitCode: number | null;
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
+  prompt: string;
+  stdout: string;
+  stderr: string;
+}): string {
+  const lines: string[] = [];
+  lines.push("── gitgang agent log ──");
+  lines.push(`agent: ${params.agent}`);
+  lines.push(`model: ${params.model}`);
+  lines.push(`turn: ${params.turn}`);
+  lines.push(`status: ${params.status}`);
+  lines.push(`exit_code: ${params.exitCode ?? "—"}`);
+  lines.push(`started_at: ${params.startedAt}`);
+  lines.push(`finished_at: ${params.finishedAt}`);
+  lines.push(`duration_ms: ${params.durationMs}`);
+  lines.push("── prompt ──");
+  lines.push(params.prompt);
+  lines.push("── stdout ──");
+  lines.push(params.stdout);
+  lines.push("── stderr ──");
+  lines.push(params.stderr);
+  return lines.join("\n");
+}
 
 export function createRealFanOut(cfg: RealFanOutConfig): ExecuteTurnDeps["fanOut"] {
   return async ({ turn, userMessage, history, worktreesDir, base, onAgentProgress }) => {
@@ -456,6 +514,7 @@ export function createRealFanOut(cfg: RealFanOutConfig): ExecuteTurnDeps["fanOut
           const proc = spawnProcess(["bash", "-c", bashCmd], { cwd: wt.dir });
           registerActiveChild(proc);
 
+          const startedAt = new Date().toISOString();
           let timedOut = false;
           const timer = setTimeout(() => {
             timedOut = true;
@@ -466,12 +525,13 @@ export function createRealFanOut(cfg: RealFanOutConfig): ExecuteTurnDeps["fanOut
             }
           }, cfg.timeoutMs);
 
-          const [stdout, , code] = await Promise.all([
+          const [stdout, stderr, code] = await Promise.all([
             readStream(proc.stdout),
             readStream(proc.stderr),
             proc.exited,
           ]);
           clearTimeout(timer);
+          const finishedAt = new Date().toISOString();
 
           const diffSummary = await gitDiffStat(wt.dir, base);
           const diffPaths = diffSummary
@@ -487,6 +547,29 @@ export function createRealFanOut(cfg: RealFanOutConfig): ExecuteTurnDeps["fanOut
             : code === 0
               ? "ok"
               : "failed";
+
+          if (cfg.logsDir) {
+            try {
+              const turnLogsDir = join(cfg.logsDir, `turn-${turn}`);
+              mkdirSync(turnLogsDir, { recursive: true });
+              const logContent = formatAgentLog({
+                agent,
+                model: cfg.models[agent],
+                turn,
+                status,
+                exitCode: typeof code === "number" ? code : null,
+                startedAt,
+                finishedAt,
+                durationMs: Date.parse(finishedAt) - Date.parse(startedAt),
+                prompt,
+                stdout,
+                stderr,
+              });
+              writeFileSync(join(turnLogsDir, `${agent}.log`), logContent);
+            } catch {
+              // log writing is best-effort; never fail the turn over it
+            }
+          }
 
           emit({
             agent: agent as AgentIdLocal,
@@ -504,6 +587,28 @@ export function createRealFanOut(cfg: RealFanOutConfig): ExecuteTurnDeps["fanOut
             diffPaths,
           };
         } catch (err) {
+          if (cfg.logsDir) {
+            try {
+              const turnLogsDir = join(cfg.logsDir, `turn-${turn}`);
+              mkdirSync(turnLogsDir, { recursive: true });
+              const logContent = formatAgentLog({
+                agent,
+                model: cfg.models[agent],
+                turn,
+                status: "failed",
+                exitCode: null,
+                startedAt: new Date().toISOString(),
+                finishedAt: new Date().toISOString(),
+                durationMs: 0,
+                prompt: "(prompt not built; failed before spawn)",
+                stdout: "",
+                stderr: (err as Error).message,
+              });
+              writeFileSync(join(turnLogsDir, `${agent}.log`), logContent);
+            } catch {
+              // best effort
+            }
+          }
           emit({ agent: agent as AgentIdLocal, phase: "failed" });
           return {
             id: agent,
