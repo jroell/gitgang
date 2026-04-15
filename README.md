@@ -99,6 +99,7 @@ For questions, the turn ends with the synthesis. For code changes, the orchestra
 **Session management:**
 
     gg sessions list                      # list recent sessions (with topic)
+    gg sessions search <query>            # find sessions matching text (topic/answer)
     gg sessions delete <id> --yes         # remove a single session from disk
     gg sessions prune --older-than 30d    # dry-run list sessions older than duration
     gg sessions prune --older-than 30d -y # actually delete them

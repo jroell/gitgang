@@ -1216,3 +1216,59 @@ describe("sessions prune subcommand parsing", () => {
     });
   });
 });
+
+describe("sessions search subcommand parsing", () => {
+  test("'sessions search auth' captures query", () => {
+    const p = parseArgs(["sessions", "search", "auth"]);
+    expect(p.subcommand).toEqual({
+      kind: "sessions_search",
+      query: "auth",
+      limit: 10,
+    });
+  });
+
+  test("multi-word query is joined", () => {
+    const p = parseArgs(["sessions", "search", "JWT", "refactor"]);
+    expect(p.subcommand).toEqual({
+      kind: "sessions_search",
+      query: "JWT refactor",
+      limit: 10,
+    });
+  });
+
+  test("--limit overrides default", () => {
+    const p = parseArgs(["sessions", "search", "auth", "--limit", "3"]);
+    expect(p.subcommand).toEqual({
+      kind: "sessions_search",
+      query: "auth",
+      limit: 3,
+    });
+  });
+
+  test("-n short form for limit", () => {
+    const p = parseArgs(["sessions", "search", "auth", "-n", "5"]);
+    expect(p.subcommand).toEqual({
+      kind: "sessions_search",
+      query: "auth",
+      limit: 5,
+    });
+  });
+
+  test("invalid limit value falls back to default", () => {
+    const p = parseArgs(["sessions", "search", "auth", "--limit", "abc"]);
+    expect(p.subcommand).toEqual({
+      kind: "sessions_search",
+      query: "auth",
+      limit: 10,
+    });
+  });
+
+  test("zero or negative limit falls back to default", () => {
+    expect(parseArgs(["sessions", "search", "auth", "--limit", "0"]).subcommand).toMatchObject({
+      limit: 10,
+    });
+    expect(parseArgs(["sessions", "search", "auth", "--limit", "-3"]).subcommand).toMatchObject({
+      limit: 10,
+    });
+  });
+});
