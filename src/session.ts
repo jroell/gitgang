@@ -663,3 +663,149 @@ function makeSnippet(text: string, idx: number, matchLen: number): string {
   const suffix = end < flat.length ? "…" : "";
   return prefix + flat.slice(start, end).trim() + suffix;
 }
+
+export type SessionStats = {
+  turns: number;
+  firstEventAt: string | null;
+  lastEventAt: string | null;
+  /** Wall-clock duration in ms; null if < 2 events. */
+  durationMs: number | null;
+  agentRuns: Record<AgentId, { ok: number; failed: number; timeout: number }>;
+  merges: { merged: number; declined: number; pr_only: number };
+  totalAgreements: number;
+  totalDisagreements: number;
+  forcedAsk: number;
+  forcedCode: number;
+  clears: number;
+};
+
+/**
+ * Aggregate a SessionEvent list into a SessionStats summary. Pure function;
+ * does not read any files. Results are stable regardless of input event
+ * ordering within a turn — counts are driven by event type, not position.
+ */
+export function computeSessionStats(events: SessionEvent[]): SessionStats {
+  const agentRuns: SessionStats["agentRuns"] = {
+    gemini: { ok: 0, failed: 0, timeout: 0 },
+    claude: { ok: 0, failed: 0, timeout: 0 },
+    codex: { ok: 0, failed: 0, timeout: 0 },
+  };
+  const merges: SessionStats["merges"] = { merged: 0, declined: 0, pr_only: 0 };
+  const turns = new Set<number>();
+  let firstEventAt: string | null = null;
+  let lastEventAt: string | null = null;
+  let totalAgreements = 0;
+  let totalDisagreements = 0;
+  let forcedAsk = 0;
+  let forcedCode = 0;
+  let clears = 0;
+
+  for (const e of events) {
+    if (e.type === "user") {
+      turns.add(e.turn);
+      if (e.forcedMode === "ask") forcedAsk++;
+      if (e.forcedMode === "code") forcedCode++;
+    } else if (e.type === "agent_end") {
+      agentRuns[e.agent][e.status]++;
+    } else if (e.type === "orchestrator") {
+      totalAgreements += e.payload.agreement.length;
+      totalDisagreements += e.payload.disagreement.length;
+    } else if (e.type === "merge") {
+      merges[e.outcome]++;
+    } else if (e.type === "clear") {
+      clears++;
+    }
+    if (firstEventAt === null) firstEventAt = e.ts;
+    lastEventAt = e.ts;
+  }
+
+  const firstMs = firstEventAt ? Date.parse(firstEventAt) : NaN;
+  const lastMs = lastEventAt ? Date.parse(lastEventAt) : NaN;
+  const durationMs =
+    Number.isFinite(firstMs) && Number.isFinite(lastMs) && lastMs > firstMs
+      ? lastMs - firstMs
+      : null;
+
+  return {
+    turns: turns.size,
+    firstEventAt,
+    lastEventAt,
+    durationMs,
+    agentRuns,
+    merges,
+    totalAgreements,
+    totalDisagreements,
+    forcedAsk,
+    forcedCode,
+    clears,
+  };
+}
+
+/**
+ * Format a SessionStats summary as a human-readable block. Pure function.
+ */
+export function formatSessionStats(stats: SessionStats, id?: string): string {
+  const lines: string[] = [];
+  lines.push(`Session stats${id ? ` — ${id}` : ""}`);
+  lines.push("");
+  lines.push(`  Turns:         ${stats.turns}`);
+  const dur = stats.durationMs
+    ? humanizeMs(stats.durationMs)
+    : stats.firstEventAt
+      ? "(< 1 event)"
+      : "—";
+  lines.push(`  Duration:      ${dur}`);
+  if (stats.firstEventAt) lines.push(`  First event:   ${stats.firstEventAt}`);
+  if (stats.lastEventAt && stats.lastEventAt !== stats.firstEventAt) {
+    lines.push(`  Last event:    ${stats.lastEventAt}`);
+  }
+  lines.push("");
+  lines.push("  Agents:");
+  for (const agent of ["gemini", "claude", "codex"] as const) {
+    const r = stats.agentRuns[agent];
+    const total = r.ok + r.failed + r.timeout;
+    if (total === 0) {
+      lines.push(`    ${agent.padEnd(8)} —`);
+    } else {
+      const parts: string[] = [];
+      if (r.ok > 0) parts.push(`${r.ok} ok`);
+      if (r.failed > 0) parts.push(`${r.failed} failed`);
+      if (r.timeout > 0) parts.push(`${r.timeout} timeout`);
+      lines.push(`    ${agent.padEnd(8)} ${total} run${total === 1 ? "" : "s"} (${parts.join(", ")})`);
+    }
+  }
+  lines.push("");
+  const mergeTotal = stats.merges.merged + stats.merges.declined + stats.merges.pr_only;
+  if (mergeTotal > 0) {
+    const parts: string[] = [];
+    if (stats.merges.merged > 0) parts.push(`${stats.merges.merged} merged`);
+    if (stats.merges.declined > 0) parts.push(`${stats.merges.declined} declined`);
+    if (stats.merges.pr_only > 0) parts.push(`${stats.merges.pr_only} PR-only`);
+    lines.push(`  Merges:        ${mergeTotal} (${parts.join(", ")})`);
+  } else {
+    lines.push(`  Merges:        —`);
+  }
+  lines.push(`  Agreements:    ${stats.totalAgreements} claim${stats.totalAgreements === 1 ? "" : "s"} across turns`);
+  lines.push(`  Disagreements: ${stats.totalDisagreements} topic${stats.totalDisagreements === 1 ? "" : "s"} across turns`);
+  if (stats.forcedAsk + stats.forcedCode > 0) {
+    lines.push(
+      `  Forced modes:  ${stats.forcedAsk} /ask, ${stats.forcedCode} /code`,
+    );
+  }
+  if (stats.clears > 0) {
+    lines.push(`  Clears:        ${stats.clears}`);
+  }
+  return lines.join("\n") + "\n";
+}
+
+function humanizeMs(ms: number): string {
+  const totalSec = Math.round(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  const parts: string[] = [];
+  if (h > 0) parts.push(`${h}h`);
+  if (m > 0) parts.push(`${m}m`);
+  if (s > 0 || parts.length === 0) parts.push(`${s}s`);
+  return parts.join(" ");
+}

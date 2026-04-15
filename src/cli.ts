@@ -47,6 +47,8 @@ import {
   selectSessionsToPrune,
   searchSessionEvents,
   readEvents,
+  computeSessionStats,
+  formatSessionStats,
   formatSessionExport,
   type LoadedSession,
   type SessionEvent,
@@ -964,6 +966,11 @@ function parseArgs(raw: string[]) {
         subcommand: { kind: "sessions_delete", id: raw[2], confirmed },
       } as unknown as ParsedArgs;
     }
+    if (raw[1] === "stats" && raw[2]) {
+      return {
+        subcommand: { kind: "sessions_stats", id: raw[2] },
+      } as unknown as ParsedArgs;
+    }
     if (raw[1] === "search" && raw[2]) {
       // Walk tokens after "search" once: extract --limit/-n value, collect
       // every other non-flag token as the query.
@@ -1010,6 +1017,7 @@ function parseArgs(raw: string[]) {
       "usage:\n" +
         "  gg sessions list\n" +
         "  gg sessions show <id>\n" +
+        "  gg sessions stats <id>\n" +
         "  gg sessions export <id> [--output PATH]\n" +
         "  gg sessions delete <id> --yes\n" +
         "  gg sessions prune --older-than <duration> [--yes]\n" +
@@ -1190,6 +1198,7 @@ interface ParsedArgs {
     | { kind: "sessions_delete"; id: string; confirmed: boolean }
     | { kind: "sessions_prune"; olderThan: string; confirmed: boolean }
     | { kind: "sessions_search"; query: string; limit: number }
+    | { kind: "sessions_stats"; id: string }
     | { kind: "doctor" };
 }
 
@@ -2663,6 +2672,9 @@ export async function dispatchMain(parsed: ParsedArgs): Promise<number> {
   if (parsed.subcommand?.kind === "sessions_search") {
     return runSessionsSearch(parsed.subcommand.query, parsed.subcommand.limit);
   }
+  if (parsed.subcommand?.kind === "sessions_stats") {
+    return runSessionsStats(parsed.subcommand.id);
+  }
   if (parsed.subcommand?.kind === "doctor") {
     const { report, exitCode } = runDoctor(process.cwd(), process.stdout.isTTY ?? false);
     process.stdout.write(report);
@@ -3090,6 +3102,18 @@ function runSessionsDelete(id: string, confirmed: boolean): number {
   }
   rmSync(dir, { recursive: true, force: true });
   process.stdout.write(`Deleted session ${id}.\n`);
+  return 0;
+}
+
+function runSessionsStats(id: string): number {
+  const dir = resolve(".gitgang", "sessions", id);
+  if (!existsSync(dir)) {
+    process.stderr.write(`Session ${id} not found.\n`);
+    return 1;
+  }
+  const loaded = loadSession(dir);
+  const stats = computeSessionStats(loaded.events);
+  process.stdout.write(formatSessionStats(stats, loaded.id));
   return 0;
 }
 

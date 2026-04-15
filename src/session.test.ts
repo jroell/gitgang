@@ -1245,3 +1245,202 @@ describe("findLastUserMessage respects /clear", () => {
     expect(result?.turn).toBe(3);
   });
 });
+
+import { computeSessionStats, formatSessionStats } from "./session";
+
+describe("computeSessionStats", () => {
+  test("empty log returns zeroed stats", () => {
+    const stats = computeSessionStats([]);
+    expect(stats.turns).toBe(0);
+    expect(stats.durationMs).toBeNull();
+    expect(stats.firstEventAt).toBeNull();
+    expect(stats.lastEventAt).toBeNull();
+    expect(stats.agentRuns.gemini).toEqual({ ok: 0, failed: 0, timeout: 0 });
+    expect(stats.merges).toEqual({ merged: 0, declined: 0, pr_only: 0 });
+    expect(stats.totalAgreements).toBe(0);
+    expect(stats.totalDisagreements).toBe(0);
+    expect(stats.forcedAsk).toBe(0);
+    expect(stats.forcedCode).toBe(0);
+    expect(stats.clears).toBe(0);
+  });
+
+  test("counts unique user turns, not raw user events", () => {
+    const events: SessionEvent[] = [
+      { ts: "t1", turn: 1, type: "user", text: "a", forcedMode: null },
+      { ts: "t2", turn: 2, type: "user", text: "b", forcedMode: null },
+      { ts: "t3", turn: 1, type: "user", text: "a-retry", forcedMode: null },
+    ];
+    expect(computeSessionStats(events).turns).toBe(2);
+  });
+
+  test("agentRuns breaks down by status", () => {
+    const events: SessionEvent[] = [
+      { ts: "t", turn: 1, type: "agent_end", agent: "gemini", status: "ok", diffSummary: "" },
+      { ts: "t", turn: 1, type: "agent_end", agent: "gemini", status: "ok", diffSummary: "" },
+      { ts: "t", turn: 2, type: "agent_end", agent: "gemini", status: "failed", diffSummary: "" },
+      { ts: "t", turn: 2, type: "agent_end", agent: "claude", status: "timeout", diffSummary: "" },
+    ];
+    const stats = computeSessionStats(events);
+    expect(stats.agentRuns.gemini).toEqual({ ok: 2, failed: 1, timeout: 0 });
+    expect(stats.agentRuns.claude).toEqual({ ok: 0, failed: 0, timeout: 1 });
+    expect(stats.agentRuns.codex).toEqual({ ok: 0, failed: 0, timeout: 0 });
+  });
+
+  test("merges count by outcome", () => {
+    const events: SessionEvent[] = [
+      { ts: "t", turn: 1, type: "merge", branch: "b1", outcome: "merged" },
+      { ts: "t", turn: 2, type: "merge", branch: "b2", outcome: "merged" },
+      { ts: "t", turn: 3, type: "merge", branch: "b3", outcome: "declined" },
+      { ts: "t", turn: 4, type: "merge", branch: "b4", outcome: "pr_only" },
+    ];
+    expect(computeSessionStats(events).merges).toEqual({
+      merged: 2,
+      declined: 1,
+      pr_only: 1,
+    });
+  });
+
+  test("aggregates agreement/disagreement counts across orchestrator events", () => {
+    const events: SessionEvent[] = [
+      {
+        ts: "t",
+        turn: 1,
+        type: "orchestrator",
+        payload: {
+          intent: "ask",
+          agreement: ["a", "b"],
+          disagreement: [
+            { topic: "x", positions: {}, verdict: "v", evidence: [] },
+          ],
+          bestAnswer: "",
+        },
+      },
+      {
+        ts: "t",
+        turn: 2,
+        type: "orchestrator",
+        payload: {
+          intent: "ask",
+          agreement: ["c"],
+          disagreement: [],
+          bestAnswer: "",
+        },
+      },
+    ];
+    const stats = computeSessionStats(events);
+    expect(stats.totalAgreements).toBe(3);
+    expect(stats.totalDisagreements).toBe(1);
+  });
+
+  test("counts forced-mode user messages", () => {
+    const events: SessionEvent[] = [
+      { ts: "t", turn: 1, type: "user", text: "x", forcedMode: "ask" },
+      { ts: "t", turn: 2, type: "user", text: "y", forcedMode: "ask" },
+      { ts: "t", turn: 3, type: "user", text: "z", forcedMode: "code" },
+      { ts: "t", turn: 4, type: "user", text: "w", forcedMode: null },
+    ];
+    const stats = computeSessionStats(events);
+    expect(stats.forcedAsk).toBe(2);
+    expect(stats.forcedCode).toBe(1);
+  });
+
+  test("counts clear events", () => {
+    const events: SessionEvent[] = [
+      { ts: "t", turn: 0, type: "clear" },
+      { ts: "t", turn: 0, type: "clear" },
+    ];
+    expect(computeSessionStats(events).clears).toBe(2);
+  });
+
+  test("duration computed from first to last event timestamp", () => {
+    const events: SessionEvent[] = [
+      { ts: "2026-04-15T07:00:00.000Z", turn: 1, type: "user", text: "x", forcedMode: null },
+      { ts: "2026-04-15T07:05:00.000Z", turn: 1, type: "merge", branch: "b", outcome: "merged" },
+    ];
+    const stats = computeSessionStats(events);
+    expect(stats.durationMs).toBe(5 * 60 * 1000);
+    expect(stats.firstEventAt).toBe("2026-04-15T07:00:00.000Z");
+    expect(stats.lastEventAt).toBe("2026-04-15T07:05:00.000Z");
+  });
+
+  test("duration is null when only one event (no range)", () => {
+    const events: SessionEvent[] = [
+      { ts: "2026-04-15T07:00:00.000Z", turn: 1, type: "user", text: "x", forcedMode: null },
+    ];
+    expect(computeSessionStats(events).durationMs).toBeNull();
+  });
+});
+
+describe("formatSessionStats", () => {
+  test("renders all sections for a rich session", () => {
+    const events: SessionEvent[] = [
+      { ts: "2026-04-15T07:00:00.000Z", turn: 1, type: "user", text: "q", forcedMode: "ask" },
+      { ts: "2026-04-15T07:00:30.000Z", turn: 1, type: "agent_end", agent: "gemini", status: "ok", diffSummary: "" },
+      { ts: "2026-04-15T07:01:00.000Z", turn: 1, type: "agent_end", agent: "claude", status: "failed", diffSummary: "" },
+      {
+        ts: "2026-04-15T07:01:30.000Z",
+        turn: 1,
+        type: "orchestrator",
+        payload: {
+          intent: "ask",
+          agreement: ["a"],
+          disagreement: [{ topic: "x", positions: {}, verdict: "v", evidence: [] }],
+          bestAnswer: "",
+        },
+      },
+      { ts: "2026-04-15T07:02:00.000Z", turn: 1, type: "merge", branch: "b", outcome: "merged" },
+    ];
+    const out = formatSessionStats(computeSessionStats(events), "sess-abc");
+    expect(out).toContain("Session stats — sess-abc");
+    expect(out).toContain("Turns:         1");
+    expect(out).toContain("Duration:      2m");
+    expect(out).toContain("gemini   1 run (1 ok)");
+    expect(out).toContain("claude   1 run (1 failed)");
+    expect(out).toContain("codex    —");
+    expect(out).toContain("Merges:        1 (1 merged)");
+    expect(out).toContain("Agreements:    1 claim across turns");
+    expect(out).toContain("Disagreements: 1 topic across turns");
+    expect(out).toContain("Forced modes:  1 /ask, 0 /code");
+  });
+
+  test("renders empty/zeroed stats cleanly", () => {
+    const out = formatSessionStats(computeSessionStats([]));
+    expect(out).toContain("Turns:         0");
+    expect(out).toContain("gemini   —");
+    expect(out).toContain("claude   —");
+    expect(out).toContain("codex    —");
+    expect(out).toContain("Merges:        —");
+  });
+
+  test("omits id header when not given", () => {
+    const out = formatSessionStats(computeSessionStats([]));
+    expect(out).toMatch(/^Session stats\n/);
+    expect(out).not.toContain(" — ");
+  });
+
+  test("humanizes duration in h/m/s parts", () => {
+    const events: SessionEvent[] = [
+      { ts: "2026-04-15T07:00:00.000Z", turn: 1, type: "user", text: "x", forcedMode: null },
+      { ts: "2026-04-15T09:30:45.000Z", turn: 1, type: "merge", branch: "b", outcome: "merged" },
+    ];
+    const out = formatSessionStats(computeSessionStats(events));
+    expect(out).toContain("Duration:      2h 30m 45s");
+  });
+
+  test("plural/singular grammar for agreements and disagreements", () => {
+    const one = formatSessionStats({
+      ...computeSessionStats([]),
+      totalAgreements: 1,
+      totalDisagreements: 1,
+    });
+    expect(one).toContain("1 claim across");
+    expect(one).toContain("1 topic across");
+    const many = formatSessionStats({
+      ...computeSessionStats([]),
+      totalAgreements: 3,
+      totalDisagreements: 4,
+    });
+    expect(many).toContain("3 claims across");
+    expect(many).toContain("4 topics across");
+  });
+});
