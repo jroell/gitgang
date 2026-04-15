@@ -6,6 +6,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
+import ora from "ora";
 
 // ─── Types ────────────────────────────────────────────────
 
@@ -206,92 +207,183 @@ function getBackend(id: PairAgentId): AgentBackend {
   }
 }
 
-// ─── Stream Message Formatting ────────────────────────────
+// ─── Premium TUI Formatting ───────────────────────────────
+//
+// Visual hierarchy:
+//   System      → dim, inline
+//   Thinking    → dim italic, │ left border in gray
+//   Text        → clean white, breathing room
+//   Read        → cyan header bar + dim content
+//   Edit        → orange header bar + red/green diff
+//   Write       → green header bar + dim preview
+//   Bash        → yellow header bar + dim output
+//   Grep/Glob   → cyan header bar
+//   Insight     → purple rounded box
+//   Error       → red
 
-const TOOL_RESULT_MAX_LINES = 60;
+const PW = 78;
+const RESULT_MAX_LINES = 50;
 const DIFF_MAX_LINES = 30;
-const WRITE_PREVIEW_LINES = 25;
+const WRITE_MAX_LINES = 25;
+
+const COLORS = {
+  read:    C.hex("#8be9fd"),
+  edit:    C.hex("#ffb86c"),
+  write:   C.hex("#50fa7b"),
+  bash:    C.hex("#f1fa8c"),
+  search:  C.hex("#8be9fd"),
+  insight: C.hex("#bd93f9"),
+  think:   C.hex("#6272a4"),
+  text:    C.hex("#f8f8f2"),
+  dim:     C.hex("#6272a4"),
+  err:     C.hex("#ff5555"),
+  tool:    C.hex("#bd93f9"),
+};
+
+function toolBar(icon: string, label: string, detail: string, color: typeof C.cyan): string {
+  const inner = `${icon} ${label}${detail ? `  ${detail}` : ""}`;
+  const padLen = Math.max(3, PW - inner.length - 4);
+  return "\n" + color(`  ── ${inner} ${"─".repeat(padLen)}`) + "\n";
+}
+
+function bordered(lines: string[], color: typeof C.dim, maxLines: number): string {
+  const show = lines.slice(0, maxLines);
+  const result = show.map(l => color("  │ ") + C.hex("#f8f8f2")(l)).join("\n");
+  if (lines.length > maxLines) {
+    return result + "\n" + color(`  │ … ${lines.length - maxLines} more lines`);
+  }
+  return result;
+}
+
+function borderedDim(lines: string[], maxLines: number): string {
+  const show = lines.slice(0, maxLines);
+  const result = show.map(l => COLORS.dim(`  │ ${l}`)).join("\n");
+  if (lines.length > maxLines) {
+    return result + "\n" + COLORS.dim(`  │ … ${lines.length - maxLines} more lines`);
+  }
+  return result;
+}
+
+function insightBox(contentLines: string[]): string {
+  const color = COLORS.insight;
+  const w = PW - 4;
+  const lines: string[] = [];
+  lines.push("");
+  lines.push(color(`  ╭── ★ Insight ${"─".repeat(w - 14)}╮`));
+  lines.push(color(`  │${" ".repeat(w)}│`));
+  for (const l of contentLines) {
+    const trimmed = l.trim();
+    if (!trimmed) continue;
+    const padded = trimmed.length < w - 2
+      ? trimmed + " ".repeat(w - 2 - trimmed.length)
+      : trimmed.slice(0, w - 2);
+    lines.push(color("  │ ") + padded + color(" │"));
+  }
+  lines.push(color(`  │${" ".repeat(w)}│`));
+  lines.push(color(`  ╰${"─".repeat(w)}╯`));
+  lines.push("");
+  return lines.join("\n");
+}
 
 function formatToolUse(name: string, input: Record<string, unknown>): string {
-  const lines: string[] = [];
-
   switch (name) {
     case "Read": {
       const path = input.file_path || input.path || "";
-      lines.push(C.hex("#8be9fd").bold(`  Read: ${path}`));
-      break;
+      return toolBar("📖", "Read", String(path), COLORS.read);
     }
     case "Edit": {
       const path = input.file_path || "";
-      lines.push(C.hex("#ffb86c").bold(`  Edit: ${path}`));
+      const lines: string[] = [toolBar("✏️ ", "Edit", String(path), COLORS.edit)];
       if (input.old_string) {
-        const oldLines = String(input.old_string).split("\n");
-        const show = oldLines.slice(0, DIFF_MAX_LINES);
-        for (const l of show) lines.push(C.red(`  - ${l}`));
-        if (oldLines.length > DIFF_MAX_LINES) lines.push(C.red.dim(`  ... (${oldLines.length - DIFF_MAX_LINES} more lines removed)`));
+        const old = String(input.old_string).split("\n").slice(0, DIFF_MAX_LINES);
+        for (const l of old) lines.push(C.red(`  │ - ${l}`));
+        const total = String(input.old_string).split("\n").length;
+        if (total > DIFF_MAX_LINES) lines.push(C.red.dim(`  │ … ${total - DIFF_MAX_LINES} more lines removed`));
       }
       if (input.new_string) {
-        const newLines = String(input.new_string).split("\n");
-        const show = newLines.slice(0, DIFF_MAX_LINES);
-        for (const l of show) lines.push(C.green(`  + ${l}`));
-        if (newLines.length > DIFF_MAX_LINES) lines.push(C.green.dim(`  ... (${newLines.length - DIFF_MAX_LINES} more lines added)`));
+        const nw = String(input.new_string).split("\n").slice(0, DIFF_MAX_LINES);
+        for (const l of nw) lines.push(C.green(`  │ + ${l}`));
+        const total = String(input.new_string).split("\n").length;
+        if (total > DIFF_MAX_LINES) lines.push(C.green.dim(`  │ … ${total - DIFF_MAX_LINES} more lines added`));
       }
-      break;
+      return lines.join("\n");
     }
     case "Write": {
       const path = input.file_path || "";
-      lines.push(C.hex("#50fa7b").bold(`  Write: ${path}`));
+      const lines: string[] = [toolBar("📝", "Write", String(path), COLORS.write)];
       if (input.content) {
-        const contentLines = String(input.content).split("\n");
-        const show = contentLines.slice(0, WRITE_PREVIEW_LINES);
-        for (const l of show) lines.push(C.dim(`  │ ${l}`));
-        if (contentLines.length > WRITE_PREVIEW_LINES) lines.push(C.dim(`  │ ... (${contentLines.length - WRITE_PREVIEW_LINES} more lines)`));
+        const cl = String(input.content).split("\n");
+        lines.push(borderedDim(cl, WRITE_MAX_LINES));
       }
-      break;
+      return lines.join("\n");
     }
     case "Bash": {
       const cmd = input.command || input.description || "";
-      lines.push(C.hex("#f1fa8c").bold(`  $ ${cmd}`));
-      break;
+      return toolBar("$", "Bash", String(cmd), COLORS.bash);
     }
     case "Glob": {
       const pattern = input.pattern || "";
       const path = input.path || "";
-      lines.push(C.hex("#8be9fd")(`  Glob: ${pattern}${path ? ` in ${path}` : ""}`));
-      break;
+      return toolBar("🔍", "Glob", `${pattern}${path ? ` in ${path}` : ""}`, COLORS.search);
     }
     case "Grep": {
       const pattern = input.pattern || "";
       const path = input.path || "";
-      lines.push(C.hex("#8be9fd")(`  Grep: ${pattern}${path ? ` in ${path}` : ""}`));
-      break;
+      return toolBar("🔍", "Grep", `${pattern}${path ? ` in ${path}` : ""}`, COLORS.search);
+    }
+    case "Agent": {
+      const desc = input.description || input.prompt || "";
+      return toolBar("🤖", "Agent", String(desc).slice(0, 60), COLORS.tool);
     }
     default: {
       const desc = input.description || input.file_path || "";
-      lines.push(C.hex("#bd93f9")(`  ${name}${desc ? `: ${desc}` : ""}`));
-      break;
+      return toolBar("🔧", name, String(desc).slice(0, 60), COLORS.tool);
     }
   }
-
-  return lines.join("\n");
 }
 
 function formatToolResult(content: string): string {
   const lines = content.split("\n");
-  if (lines.length <= TOOL_RESULT_MAX_LINES) {
-    return C.dim(lines.map(l => `  ${l}`).join("\n"));
+  return borderedDim(lines, RESULT_MAX_LINES);
+}
+
+function formatAssistantText(text: string): string {
+  if (text.includes("★ Insight")) {
+    return formatInsightText(text);
   }
-  const shown = lines.slice(0, TOOL_RESULT_MAX_LINES).map(l => `  ${l}`).join("\n");
-  return C.dim(shown + `\n  ... (${lines.length - TOOL_RESULT_MAX_LINES} more lines)`);
+  return `\n  ${COLORS.text(text)}\n`;
+}
+
+function formatInsightText(text: string): string {
+  const clean = text.replace(/`/g, "");
+  const lines = clean.split("\n");
+
+  const startIdx = lines.findIndex(l => l.includes("★ Insight") || l.includes("★"));
+  if (startIdx === -1) return `\n  ${text}\n`;
+
+  const endIdx = lines.findIndex((l, i) => i > startIdx && /^─{5,}$/.test(l.trim()));
+
+  const before = lines.slice(0, startIdx).filter(l => l.trim());
+  const content = lines.slice(startIdx + 1, endIdx >= 0 ? endIdx : undefined);
+  const after = endIdx >= 0 ? lines.slice(endIdx + 1).filter(l => l.trim()) : [];
+
+  const result: string[] = [];
+  for (const l of before) result.push(`\n  ${COLORS.text(l)}`);
+  result.push(insightBox(content));
+  for (const l of after) result.push(`  ${COLORS.text(l)}\n`);
+
+  return result.join("\n");
 }
 
 function formatStreamMessage(msg: Record<string, unknown>): string | null {
   if (!msg || !msg.type) return null;
 
   switch (msg.type) {
-    case "thinking":
-      if (msg.content) return C.dim.italic(`  💭 ${msg.content}`);
-      break;
+    case "thinking": {
+      if (!msg.content) break;
+      const lines = String(msg.content).split("\n");
+      return lines.map(l => COLORS.think.italic(`  │ 💭 ${l}`)).join("\n");
+    }
 
     case "tool_use": {
       const name = (msg.tool_name || msg.name || "unknown") as string;
@@ -315,23 +407,23 @@ function formatStreamMessage(msg: Record<string, unknown>): string | null {
       if (message?.content) {
         const parts: string[] = [];
         for (const block of message.content) {
-          if (block.type === "text" && block.text) parts.push(block.text);
+          if (block.type === "text" && block.text) parts.push(formatAssistantText(block.text));
           if (block.type === "tool_use" && block.name) {
             parts.push(formatToolUse(block.name, (block.input || {}) as Record<string, unknown>));
           }
         }
         if (parts.length > 0) return parts.join("\n");
       }
-      if (typeof msg.content === "string") return msg.content;
+      if (typeof msg.content === "string") return formatAssistantText(msg.content);
       break;
     }
 
     case "exec":
-      if (msg.command) return C.hex("#f1fa8c")(`  $ ${msg.command}`);
+      if (msg.command) return toolBar("$", "Exec", String(msg.command), COLORS.bash);
       break;
 
     case "system":
-      if (msg.subtype === "init") return C.dim(`  ⚙️  Initialized (${(msg.model as string) || "unknown"})`);
+      if (msg.subtype === "init") return COLORS.dim(`\n  ⚙️  Initialized (${(msg.model as string) || "unknown"})\n`);
       break;
   }
   return null;
@@ -789,7 +881,9 @@ function spawnAgent(cmd: string, args: string[], cwd: string): SpawnedProcess {
   return proc as SpawnedProcess;
 }
 
-async function collectOutput(proc: SpawnedProcess): Promise<string> {
+const REVIEWER_TIMEOUT_MS = 120_000;
+
+async function collectOutput(proc: SpawnedProcess, timeoutMs = 0): Promise<string> {
   let output = "";
   if (proc.stdout) {
     const dec = new TextDecoder();
@@ -798,6 +892,19 @@ async function collectOutput(proc: SpawnedProcess): Promise<string> {
     }
   }
   return output;
+}
+
+async function collectOutputWithTimeout(proc: SpawnedProcess, timeoutMs: number): Promise<string> {
+  return Promise.race([
+    collectOutput(proc),
+    new Promise<string>((_, reject) => {
+      setTimeout(() => {
+        proc.kill("SIGTERM");
+        setTimeout(() => { if (!proc.killed) proc.kill("SIGKILL"); }, 3000);
+        reject(new Error(`Reviewer timed out after ${Math.round(timeoutMs / 1000)}s`));
+      }, timeoutMs);
+    }),
+  ]);
 }
 
 async function gitDiff(repoRoot: string, baseBranch: string): Promise<string> {
@@ -918,21 +1025,59 @@ export async function runPairMode(opts: PairOpts): Promise<number> {
   process.stdout.write(renderHeader(opts));
   log({ type: "session_start", coder: opts.coder, reviewer: opts.reviewer, task: opts.task });
 
+  // ─── Status bar ─────────────────────────
+  let statusPhase = "starting";
+  let statusInterventions = 0;
+
+  function renderStatusBar(): string {
+    const elapsed = formatDuration(Date.now() - startTime);
+    const cols = process.stdout.columns || 80;
+
+    const left = ` 🤝 ${opts.coder}→coder  ${opts.reviewer}→reviewer`;
+    const center = ` ${statusPhase} `;
+    const right = `round ${round}  ${statusInterventions > 0 ? `💬 ${statusInterventions}  ` : ""}⏱ ${elapsed} `;
+
+    const sepColor = C.hex("#44475a");
+    const bgColor = C.bgHex("#282a36").hex("#f8f8f2");
+    const phaseColor = statusPhase === "coding"
+      ? C.bgHex("#282a36").hex("#50fa7b").bold
+      : statusPhase === "reviewing"
+        ? C.bgHex("#282a36").hex("#ff79c6").bold
+        : statusPhase === "discussing"
+          ? C.bgHex("#282a36").hex("#8be9fd").bold
+          : C.bgHex("#282a36").hex("#6272a4");
+
+    const gap = Math.max(0, cols - left.length - center.length - right.length);
+    return sepColor("─".repeat(cols)) + "\n"
+      + bgColor(left) + " ".repeat(Math.floor(gap / 2)) + phaseColor(center) + " ".repeat(Math.ceil(gap / 2)) + bgColor(right);
+  }
+
+  const statusInterval = setInterval(() => {
+    if (aborted) return;
+    const bar = renderStatusBar();
+    process.stdout.write(`\x1b[s\x1b[${(process.stdout.rows || 24)};0H${bar}\x1b[u`);
+  }, 1000);
+
   // ─── Invoke reviewer for a verdict ──────
 
   async function checkWithReviewer(isFinal: boolean): Promise<ReviewVerdict> {
-    const outputText = getBufferForReview(outputBuffer, opts.maxReviewOutputLines);
+    const reviewLines = isFinal ? 200 : 100;
+    const outputText = getBufferForReview(outputBuffer, reviewLines);
     if (!outputText.trim() && !isFinal) return { action: "continue" };
 
     let diffOutput: string | undefined;
     if (isFinal) {
-      try { diffOutput = await gitDiff(opts.repoRoot, opts.baseBranch); } catch { /* ignore */ }
+      try {
+        const diff = await gitDiff(opts.repoRoot, opts.baseBranch);
+        diffOutput = diff.length > 15000 ? diff.slice(0, 15000) + "\n… (diff truncated)" : diff;
+      } catch { /* ignore */ }
     }
 
     const reviewPrompt = buildReviewPrompt(opts.task, outputText, isFinal, interventions, diffOutput);
 
     const label = isFinal ? " (final review)" : "";
-    process.stdout.write(C.hex("#ff79c6").dim(`\n  🔍 Reviewer checking${label}...\n`));
+    statusPhase = "reviewing";
+    const spinner = ora({ text: C.hex("#ff79c6")(`Reviewer checking${label}…`), indent: 2 }).start();
     log({ type: "reviewer_start", round, isFinal });
 
     const { command, args } = reviewerBackend.buildReviewerCommand({
@@ -942,14 +1087,26 @@ export async function runPairMode(opts: PairOpts): Promise<number> {
     });
 
     const proc = spawnAgent(command, args, opts.repoRoot);
-    const rawOutput = await collectOutput(proc);
-    await proc.exited;
 
-    const verdict = parseVerdict(rawOutput);
+    let verdict: ReviewVerdict;
+    try {
+      const rawOutput = await collectOutputWithTimeout(proc, REVIEWER_TIMEOUT_MS);
+      await proc.exited;
+      verdict = parseVerdict(rawOutput);
+    } catch (err) {
+      spinner.fail(C.hex("#ffb86c")(`Reviewer timed out — defaulting to CONTINUE`));
+      log({ type: "reviewer_timeout", round, isFinal, error: String(err) });
+      return { action: "continue" };
+    }
+
     log({ type: "reviewer_verdict", round, isFinal, verdict: verdict.action });
 
     if (verdict.action === "continue") {
-      process.stdout.write(C.hex("#50fa7b").dim("  ✓ Reviewer: CONTINUE\n"));
+      spinner.succeed(C.hex("#50fa7b")("Reviewer: CONTINUE"));
+    } else if (verdict.action === "complete") {
+      spinner.succeed(C.hex("#50fa7b")("Reviewer: COMPLETE"));
+    } else {
+      spinner.warn(C.hex("#ffb86c")("Reviewer: PAUSE — starting discussion"));
     }
 
     return verdict;
@@ -971,6 +1128,7 @@ export async function runPairMode(opts: PairOpts): Promise<number> {
   ): Promise<{ transcript: ConversationTurn[]; agreed: boolean; direction: string }> {
     const transcript: ConversationTurn[] = [];
     let reviewerMessage = initialConcern + (initialSuggestion ? `\n\nSuggestion: ${initialSuggestion}` : "");
+    statusPhase = "discussing";
 
     for (let turn = 0; turn < MAX_CONVERSATION_TURNS; turn++) {
       transcript.push({ role: "reviewer", message: reviewerMessage });
@@ -1117,6 +1275,7 @@ export async function runPairMode(opts: PairOpts): Promise<number> {
     }
 
     currentCoderProc = proc;
+    statusPhase = "coding";
     log({ type: "coder_start", round, resumed: !!resumeSessionId });
 
     let linesSinceLastReview = 0;
@@ -1211,6 +1370,7 @@ export async function runPairMode(opts: PairOpts): Promise<number> {
               agreed: conversation.agreed,
               direction: conversation.direction,
             });
+            statusInterventions = interventions.length;
             log({ type: "intervention", round, agreed: conversation.agreed, direction: conversation.direction.slice(0, 200) });
 
             // Kill the suspended coder — restart with conversation context via --resume
@@ -1310,6 +1470,7 @@ export async function runPairMode(opts: PairOpts): Promise<number> {
           agreed: conversation.agreed,
           direction: conversation.direction,
         });
+        statusInterventions = interventions.length;
         log({ type: "intervention_final", round, agreed: conversation.agreed });
 
         directionForNextRound = conversation.direction;
@@ -1340,6 +1501,10 @@ export async function runPairMode(opts: PairOpts): Promise<number> {
     process.stderr.write(C.red(`\nPair session error: ${err}\n`));
     return 1;
   } finally {
+    clearInterval(statusInterval);
+    // Clear the status bar area
+    const rows = process.stdout.rows || 24;
+    process.stdout.write(`\x1b[${rows};0H\x1b[2K\x1b[${rows - 1};0H\x1b[2K\x1b[${rows - 2};0H`);
     process.removeListener("SIGINT", onSigint);
     if (currentCoderProc) currentCoderProc.kill("SIGTERM");
   }
