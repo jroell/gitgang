@@ -1294,3 +1294,28 @@ describe("sessions stats subcommand parsing", () => {
     }
   });
 });
+
+describe("completions subcommand parsing", () => {
+  test("'completions bash' parses", () => {
+    const p = parseArgs(["completions", "bash"]);
+    expect(p.subcommand).toEqual({ kind: "completions", shell: "bash" });
+  });
+
+  test("'completions zsh' parses", () => {
+    const p = parseArgs(["completions", "zsh"]);
+    expect(p.subcommand).toEqual({ kind: "completions", shell: "zsh" });
+  });
+
+  test("'completions fish' parses", () => {
+    const p = parseArgs(["completions", "fish"]);
+    expect(p.subcommand).toEqual({ kind: "completions", shell: "fish" });
+  });
+
+  test("'completions' without shell throws helpful usage", () => {
+    expect(() => parseArgs(["completions"])).toThrow(/usage:/);
+  });
+
+  test("'completions bogus' throws", () => {
+    expect(() => parseArgs(["completions", "bogus"])).toThrow(/bash\|zsh\|fish/);
+  });
+});
