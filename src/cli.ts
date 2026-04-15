@@ -1925,14 +1925,11 @@ async function applyMergePlan(
 /**
  * Apply a reviewer-picked merge plan in interactive REPL context.
  *
- * Differs from `applyMergePlan`: takes the orchestrator's `MergePlan` shape
- * ({ pick, branches, rationale, followups }) directly, and performs the
- * minimum real merge work — checkout base, `git merge --no-ff <branch>`,
- * abort on conflict.
- *
- * Does NOT run post-merge checks or create a PR; `/pr` is a separate REPL
- * command. Hybrid merges across multiple branches are not yet supported —
- * this takes `plan.branches[0]` and logs a warning.
+ * Takes the orchestrator's `MergePlan` shape ({ pick, branches, rationale,
+ * followups }), checks out `base`, and merges each listed branch with
+ * `git merge --no-ff`. Hybrid picks merge all branches in order; any other
+ * pick merges only `branches[0]`. On conflict, runs `git merge --abort` and
+ * throws. Does NOT run post-merge checks or create a PR.
  */
 export async function applyInteractiveMergePlan(
   repoRoot: string,
@@ -1942,30 +1939,30 @@ export async function applyInteractiveMergePlan(
   if (!plan.branches || plan.branches.length === 0) {
     throw new Error("merge plan has no branches to apply");
   }
-  if (plan.pick === "hybrid" && plan.branches.length > 1) {
-    console.warn(
-      C.yellow(
-        `hybrid merge across ${plan.branches.length} branches not yet supported; using first branch ${plan.branches[0]}`,
-      ),
-    );
-  }
-  const branch = plan.branches[0];
 
   await git(repoRoot, "checkout", base);
-  try {
-    await git(
-      repoRoot,
-      "merge",
-      "--no-ff",
-      branch,
-      "-m",
-      `merge ${branch} per orchestrator plan`,
-    );
-  } catch (err) {
-    await git(repoRoot, "merge", "--abort").catch(() => {});
-    throw new Error(
-      `merge conflict applying ${branch}: ${err instanceof Error ? err.message : String(err)}`,
-    );
+
+  const isHybrid = plan.pick === "hybrid" && plan.branches.length > 1;
+  const branches = isHybrid ? plan.branches : [plan.branches[0]];
+
+  for (const branch of branches) {
+    try {
+      await git(
+        repoRoot,
+        "merge",
+        "--no-ff",
+        branch,
+        "-m",
+        isHybrid
+          ? `merge ${branch} (hybrid plan, ${branches.length} branches)`
+          : `merge ${branch} per orchestrator plan`,
+      );
+    } catch (err) {
+      await git(repoRoot, "merge", "--abort").catch(() => {});
+      throw new Error(
+        `merge conflict applying ${branch}${isHybrid ? ` (hybrid, failed at branch ${branches.indexOf(branch) + 1}/${branches.length})` : ""}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 }
 

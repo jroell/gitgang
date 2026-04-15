@@ -806,6 +806,48 @@ describe("exports for interactive mode", () => {
       }),
     ).rejects.toThrow(/no branches/);
   });
+  test("applyInteractiveMergePlan merges hybrid plan across multiple branches", async () => {
+    const { execSync } = await import("node:child_process");
+    const repo = createTempDir();
+    const run = (cmd: string) => execSync(cmd, { cwd: repo, stdio: "pipe" }).toString();
+    try {
+      run("git init -q -b main");
+      run("git config user.email test@test.com");
+      run("git config user.name Test");
+      run("git commit --allow-empty -q -m 'init'");
+      // Create two non-conflicting feature branches
+      run("git checkout -q -b feat-a");
+      execSync("echo a > a.txt && git add a.txt && git commit -q -m 'add a'", {
+        cwd: repo,
+        stdio: "pipe",
+        shell: "/bin/bash",
+      });
+      run("git checkout -q main");
+      run("git checkout -q -b feat-b");
+      execSync("echo b > b.txt && git add b.txt && git commit -q -m 'add b'", {
+        cwd: repo,
+        stdio: "pipe",
+        shell: "/bin/bash",
+      });
+      run("git checkout -q main");
+
+      await applyInteractiveMergePlan(repo, "main", {
+        pick: "hybrid",
+        branches: ["feat-a", "feat-b"],
+        rationale: "combine",
+        followups: [],
+      });
+
+      // Both files should now exist on main
+      expect(existsSync(join(repo, "a.txt"))).toBe(true);
+      expect(existsSync(join(repo, "b.txt"))).toBe(true);
+      // Two merge commits + original "init" + commits on feature branches
+      const log = run("git log main --oneline --merges").trim().split("\n");
+      expect(log.length).toBe(2);
+    } finally {
+      cleanup(repo);
+    }
+  });
   test("systemConstraints is exported", () => {
     expect(typeof systemConstraints).toBe("function");
   });
