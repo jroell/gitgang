@@ -915,3 +915,94 @@ describe("findLastUserMessage", () => {
     expect(result?.text).toBe("hello");
   });
 });
+
+import { parseDurationMs, selectSessionsToPrune } from "./session";
+
+describe("parseDurationMs", () => {
+  test("parses Nd", () => {
+    expect(parseDurationMs("30d")).toBe(30 * 86_400_000);
+    expect(parseDurationMs("1d")).toBe(86_400_000);
+  });
+  test("parses Nh", () => {
+    expect(parseDurationMs("12h")).toBe(12 * 3_600_000);
+  });
+  test("parses Nm", () => {
+    expect(parseDurationMs("90m")).toBe(90 * 60_000);
+  });
+  test("parses Ns", () => {
+    expect(parseDurationMs("45s")).toBe(45_000);
+  });
+  test("ignores leading/trailing whitespace", () => {
+    expect(parseDurationMs("  7d  ")).toBe(7 * 86_400_000);
+  });
+  test("allows whitespace between number and unit", () => {
+    expect(parseDurationMs("7 d")).toBe(7 * 86_400_000);
+  });
+  test("returns null for invalid input", () => {
+    expect(parseDurationMs("")).toBeNull();
+    expect(parseDurationMs("d")).toBeNull();
+    expect(parseDurationMs("7y")).toBeNull(); // year not supported
+    expect(parseDurationMs("0d")).toBeNull(); // zero not allowed
+    expect(parseDurationMs("-1d")).toBeNull();
+    expect(parseDurationMs("abc")).toBeNull();
+  });
+});
+
+describe("selectSessionsToPrune", () => {
+  const NOW = Date.parse("2026-04-15T05:00:00Z");
+
+  test("returns empty when all sessions are recent", () => {
+    const result = selectSessionsToPrune(
+      [
+        { id: "a", startedAt: "2026-04-15T04:50:00Z" },
+        { id: "b", startedAt: "2026-04-15T04:30:00Z" },
+      ],
+      30 * 60_000, // older-than 30 minutes
+      NOW,
+    );
+    expect(result).toEqual([]);
+  });
+
+  test("returns ids older than cutoff", () => {
+    const result = selectSessionsToPrune(
+      [
+        { id: "recent", startedAt: "2026-04-15T04:50:00Z" }, // 10m ago
+        { id: "old", startedAt: "2026-04-14T05:00:00Z" }, // 24h ago
+        { id: "ancient", startedAt: "2026-04-01T05:00:00Z" }, // 14d ago
+      ],
+      86_400_000, // older-than 1 day
+      NOW,
+    );
+    // 'old' is exactly 24h ago which is NOT strictly older than 1d cutoff
+    expect(result).toEqual(["ancient"]);
+  });
+
+  test("oldest-first ordering", () => {
+    const result = selectSessionsToPrune(
+      [
+        { id: "older", startedAt: "2026-03-01T00:00:00Z" },
+        { id: "oldest", startedAt: "2026-01-01T00:00:00Z" },
+        { id: "old", startedAt: "2026-04-01T00:00:00Z" },
+      ],
+      7 * 86_400_000,
+      NOW,
+    );
+    expect(result).toEqual(["oldest", "older", "old"]);
+  });
+
+  test("skips sessions with unparseable startedAt", () => {
+    const result = selectSessionsToPrune(
+      [
+        { id: "good", startedAt: "2026-01-01T00:00:00Z" },
+        { id: "bad", startedAt: "not a date" },
+      ],
+      7 * 86_400_000,
+      NOW,
+    );
+    expect(result).toEqual(["good"]);
+  });
+
+  test("empty input → empty result", () => {
+    expect(selectSessionsToPrune([], 86_400_000, NOW)).toEqual([]);
+  });
+});
