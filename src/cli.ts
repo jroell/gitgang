@@ -2459,6 +2459,8 @@ export {
   parseReviewerAgent,
   parseDuration,
   parseFirstJson,
+  spawnProcess,
+  createWorktree,
   systemConstraints,
   featurePrompt,
   reviewerPromptJSON,

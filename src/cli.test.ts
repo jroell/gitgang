@@ -777,3 +777,29 @@ describe("Per-agent model override flags (--model-*)", () => {
     expect(parsed.task).toBe("Build it");
   });
 });
+
+import {
+  createWorktree,
+  applyMergePlan,
+  systemConstraints,
+  featurePrompt,
+  spawnProcess,
+} from "./cli";
+
+describe("exports for interactive mode", () => {
+  test("createWorktree is exported", () => {
+    expect(typeof createWorktree).toBe("function");
+  });
+  test("applyMergePlan is exported", () => {
+    expect(typeof applyMergePlan).toBe("function");
+  });
+  test("systemConstraints is exported", () => {
+    expect(typeof systemConstraints).toBe("function");
+  });
+  test("featurePrompt is exported", () => {
+    expect(typeof featurePrompt).toBe("function");
+  });
+  test("spawnProcess is exported", () => {
+    expect(typeof spawnProcess).toBe("function");
+  });
+});
