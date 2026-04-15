@@ -2,8 +2,21 @@ export type ForcedMode = "ask" | "code" | null;
 
 export type DiffTarget = "gemini" | "claude" | "codex" | "picked";
 
+export type AgentId = "gemini" | "claude" | "codex";
+
+/**
+ * Per-turn agent roster override. Applied to the single upcoming turn;
+ * subsequent turns revert to the session default. See /only and /skip.
+ */
+export type AgentFilter = { kind: "only" | "skip"; agent: AgentId };
+
 export type SlashCommand =
-  | { kind: "message"; text: string; forcedMode: ForcedMode }
+  | {
+      kind: "message";
+      text: string;
+      forcedMode: ForcedMode;
+      agentFilter?: AgentFilter;
+    }
   | { kind: "merge" }
   | { kind: "pr" }
   | { kind: "history" }
@@ -14,6 +27,10 @@ export type SlashCommand =
   | { kind: "diff"; target: DiffTarget }
   | { kind: "redo" }
   | { kind: "unknown"; raw: string };
+
+function isAgentId(value: string): value is AgentId {
+  return value === "gemini" || value === "claude" || value === "codex";
+}
 
 export function parseSlashCommand(raw: string): SlashCommand {
   const input = raw.trim();
@@ -51,6 +68,22 @@ export function parseSlashCommand(raw: string): SlashCommand {
     }
     case "/redo":
       return { kind: "redo" };
+    case "/only":
+    case "/skip": {
+      // /only <agent> <message...> or /skip <agent> <message...>
+      const filterKind = head === "/only" ? "only" : "skip";
+      const parts = tail.split(/\s+/).filter(Boolean);
+      if (parts.length === 0) return { kind: "unknown", raw: input };
+      const agent = parts[0];
+      if (!isAgentId(agent)) return { kind: "unknown", raw: input };
+      const text = parts.slice(1).join(" ");
+      return {
+        kind: "message",
+        text,
+        forcedMode: null,
+        agentFilter: { kind: filterKind, agent },
+      };
+    }
     case "/diff": {
       const target = tail.split(/\s+/).filter(Boolean)[0];
       if (!target) return { kind: "diff", target: "picked" };

@@ -1,5 +1,5 @@
 import { createInterface } from "node:readline";
-import type { ForcedMode, DiffTarget } from "./slash";
+import type { ForcedMode, DiffTarget, AgentFilter } from "./slash";
 import { parseSlashCommand } from "./slash";
 import type { LoadedSession } from "./session";
 import { appendEvent, reconstructHistory } from "./session";
@@ -16,7 +16,7 @@ export type ReplDeps = {
   input: NodeJS.ReadableStream;
   output: NodeJS.WritableStream;
   banner: string;
-  executeTurn: (text: string, forcedMode: ForcedMode) => Promise<void>;
+  executeTurn: (text: string, forcedMode: ForcedMode, agentFilter?: AgentFilter) => Promise<void>;
   showHistory: () => Promise<void>;
   showAgents: () => Promise<void>;
   showHelp: () => Promise<void>;
@@ -46,7 +46,7 @@ export async function runRepl(deps: ReplDeps): Promise<void> {
           deps.output.write("(empty input)\n");
           break;
         }
-        await deps.executeTurn(cmd.text, cmd.forcedMode);
+        await deps.executeTurn(cmd.text, cmd.forcedMode, cmd.agentFilter);
         break;
       case "history":
         await deps.showHistory();
@@ -100,6 +100,8 @@ export type ExecuteTurnDeps = {
     history: Array<{ turn: number; user: string; assistant: string }>;
     worktreesDir: string;
     base: string;
+    /** Override session's default agent roster for this turn only. */
+    agentIds?: AgentIdLocal[];
     onAgentProgress?: (event: AgentProgressEvent) => void;
   }) => Promise<AgentResult[]>;
   spawnOrchestrator: (
@@ -113,6 +115,24 @@ export type ExecuteTurnDeps = {
 export const DEFAULT_HEARTBEAT_INTERVAL_MS = Number(
   process.env.GITGANG_HEARTBEAT_MS ?? 30_000,
 );
+
+/**
+ * Apply a per-turn agent filter to a roster. Pure function.
+ *
+ * /only <agent> → returns just that agent (if present in the full roster)
+ * /skip <agent> → returns the full roster minus that agent
+ * no filter    → returns the full roster unchanged
+ */
+export function applyAgentFilter(
+  fullRoster: readonly AgentIdLocal[],
+  filter: AgentFilter | undefined,
+): AgentIdLocal[] {
+  if (!filter) return [...fullRoster];
+  if (filter.kind === "only") {
+    return fullRoster.filter((a) => a === filter.agent);
+  }
+  return fullRoster.filter((a) => a !== filter.agent);
+}
 
 function formatElapsed(ms: number): string {
   const totalSec = Math.floor(ms / 1000);
@@ -187,6 +207,7 @@ export async function executeTurn(
   userMessage: string,
   forcedMode: "ask" | "code" | null,
   deps: ExecuteTurnDeps,
+  agentFilter?: AgentFilter,
 ): Promise<void> {
   const turn = currentTurnNumber(deps.session) + 1;
   const now = () => new Date().toISOString();
@@ -200,9 +221,20 @@ export async function executeTurn(
     forcedMode,
   });
 
+  // Resolve per-turn agent roster once; applied consistently to progress
+  // state, fanOut call, and the heartbeat/transition display.
+  const fullRoster: AgentIdLocal[] = ["gemini", "claude", "codex"];
+  const agentOrder: AgentIdLocal[] = applyAgentFilter(fullRoster, agentFilter);
   const agentStates = new Map<AgentIdLocal, AgentPhase>();
-  const agentOrder: AgentIdLocal[] = ["gemini", "claude", "codex"];
   for (const id of agentOrder) agentStates.set(id, "pending");
+
+  if (agentFilter) {
+    const explanation =
+      agentFilter.kind === "only"
+        ? `using only ${agentFilter.agent}`
+        : `skipping ${agentFilter.agent}`;
+    deps.output.write(`(agent filter: ${explanation} for this turn)\n`);
+  }
 
   const turnStart = Date.now();
   const heartbeatMs = deps.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
@@ -223,6 +255,7 @@ export async function executeTurn(
       history,
       worktreesDir: deps.session.worktreesDir,
       base: deps.base,
+      agentIds: agentFilter ? agentOrder : undefined,
       onAgentProgress: (event) => {
         if (event.phase === "start") agentStates.set(event.agent, "running");
         else agentStates.set(event.agent, event.phase);
@@ -486,7 +519,7 @@ export function formatAgentLog(params: {
 }
 
 export function createRealFanOut(cfg: RealFanOutConfig): ExecuteTurnDeps["fanOut"] {
-  return async ({ turn, userMessage, history, worktreesDir, base, onAgentProgress }) => {
+  return async ({ turn, userMessage, history, worktreesDir, base, agentIds, onAgentProgress }) => {
     mkdirSync(worktreesDir, { recursive: true });
     const rootFolder = join(worktreesDir, `turn-${turn}`);
     mkdirSync(rootFolder, { recursive: true });
@@ -499,8 +532,12 @@ export function createRealFanOut(cfg: RealFanOutConfig): ExecuteTurnDeps["fanOut
       }
     };
 
+    // Per-turn roster override (from /only or /skip) takes precedence over
+    // the session default.
+    const turnAgents = agentIds && agentIds.length > 0 ? agentIds : cfg.agentIds;
+
     const results: AgentResult[] = await Promise.all(
-      cfg.agentIds.map(async (agent): Promise<AgentResult> => {
+      turnAgents.map(async (agent): Promise<AgentResult> => {
         let branch = `agents/${agent}/turn-${turn}`;
         emit({ agent: agent as AgentIdLocal, phase: "start" });
         try {

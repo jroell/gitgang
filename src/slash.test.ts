@@ -127,3 +127,73 @@ describe("/redo", () => {
     expect(parseSlashCommand("/redo extra")).toEqual({ kind: "redo" });
   });
 });
+
+describe("/only and /skip", () => {
+  test("/only claude <text> produces message with only-filter", () => {
+    expect(parseSlashCommand("/only claude fix the bug")).toEqual({
+      kind: "message",
+      text: "fix the bug",
+      forcedMode: null,
+      agentFilter: { kind: "only", agent: "claude" },
+    });
+  });
+
+  test("/skip codex <text> produces message with skip-filter", () => {
+    expect(parseSlashCommand("/skip codex add logout")).toEqual({
+      kind: "message",
+      text: "add logout",
+      forcedMode: null,
+      agentFilter: { kind: "skip", agent: "codex" },
+    });
+  });
+
+  test("/only with bogus agent is unknown", () => {
+    expect(parseSlashCommand("/only bogus xyz")).toEqual({
+      kind: "unknown",
+      raw: "/only bogus xyz",
+    });
+  });
+
+  test("/skip with bogus agent is unknown", () => {
+    expect(parseSlashCommand("/skip notreal text")).toEqual({
+      kind: "unknown",
+      raw: "/skip notreal text",
+    });
+  });
+
+  test("/only without agent is unknown", () => {
+    expect(parseSlashCommand("/only")).toEqual({
+      kind: "unknown",
+      raw: "/only",
+    });
+  });
+
+  test("/only claude with no text yields empty-text message (agent still captured)", () => {
+    expect(parseSlashCommand("/only claude")).toEqual({
+      kind: "message",
+      text: "",
+      forcedMode: null,
+      agentFilter: { kind: "only", agent: "claude" },
+    });
+  });
+
+  test("each valid agent works with /only", () => {
+    expect(parseSlashCommand("/only gemini x").kind).toBe("message");
+    expect(parseSlashCommand("/only claude x").kind).toBe("message");
+    expect(parseSlashCommand("/only codex x").kind).toBe("message");
+  });
+
+  test("multi-word text preserved in /skip", () => {
+    expect(parseSlashCommand("/skip gemini do many things quickly")).toMatchObject({
+      text: "do many things quickly",
+    });
+  });
+
+  test("/only preserves inner whitespace runs as single spaces", () => {
+    // Inner whitespace runs collapse in our tokenizer, which is fine — agents
+    // don't care about exact whitespace in prompts.
+    expect(parseSlashCommand("/only claude  extra  spaces")).toMatchObject({
+      text: "extra spaces",
+    });
+  });
+});
