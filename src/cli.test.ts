@@ -905,7 +905,7 @@ describe("interactive mode flag parsing", () => {
 
   test("sessions list subcommand", () => {
     const p = parseArgs(["sessions", "list"]);
-    expect(p.subcommand).toEqual({ kind: "sessions_list" });
+    expect(p.subcommand).toEqual({ kind: "sessions_list", json: false });
   });
 
   test("sessions show ID subcommand", () => {
@@ -1039,7 +1039,7 @@ describe("sessions export subcommand parsing", () => {
 
   test("'sessions list' still parses correctly (no regression)", () => {
     const p = parseArgs(["sessions", "list"]);
-    expect(p.subcommand).toEqual({ kind: "sessions_list" });
+    expect(p.subcommand).toMatchObject({ kind: "sessions_list" });
   });
 
   test("'sessions show <id>' still parses correctly (no regression)", () => {
@@ -1276,7 +1276,7 @@ describe("sessions search subcommand parsing", () => {
 describe("sessions stats subcommand parsing", () => {
   test("'sessions stats <id>' parses to subcommand", () => {
     const p = parseArgs(["sessions", "stats", "abc123"]);
-    expect(p.subcommand).toEqual({
+    expect(p.subcommand).toMatchObject({
       kind: "sessions_stats",
       id: "abc123",
     });
@@ -1317,5 +1317,36 @@ describe("completions subcommand parsing", () => {
 
   test("'completions bogus' throws", () => {
     expect(() => parseArgs(["completions", "bogus"])).toThrow(/bash\|zsh\|fish/);
+  });
+});
+
+describe("--json flag parsing", () => {
+  test("sessions list --json sets json=true", () => {
+    const p = parseArgs(["sessions", "list", "--json"]);
+    expect(p.subcommand).toEqual({ kind: "sessions_list", json: true });
+  });
+
+  test("sessions list without --json sets json=false", () => {
+    const p = parseArgs(["sessions", "list"]);
+    expect(p.subcommand).toEqual({ kind: "sessions_list", json: false });
+  });
+
+  test("sessions stats <id> --json sets json=true", () => {
+    const p = parseArgs(["sessions", "stats", "abc", "--json"]);
+    expect(p.subcommand).toEqual({
+      kind: "sessions_stats",
+      id: "abc",
+      json: true,
+    });
+  });
+
+  test("doctor --json sets json=true", () => {
+    const p = parseArgs(["doctor", "--json"]);
+    expect(p.subcommand).toEqual({ kind: "doctor", json: true });
+  });
+
+  test("doctor without --json sets json=false", () => {
+    const p = parseArgs(["doctor"]);
+    expect(p.subcommand).toEqual({ kind: "doctor", json: false });
   });
 });

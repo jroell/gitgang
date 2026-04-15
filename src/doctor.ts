@@ -263,6 +263,17 @@ export function realProbes(): DoctorProbes {
  * Top-level entry: run all probes and render the report. Returns exit code
  * 0 if no failures, 1 otherwise.
  */
+/**
+ * JSON-shaped counterpart to runDoctor. Returns structured check results
+ * plus the derived exit code, so callers can serialize to stdout for
+ * machine consumption (CI, dashboards, jq pipelines).
+ */
+export function runDoctorJson(cwd: string): { results: CheckResult[]; exitCode: number } {
+  const results = runAllChecks(realProbes(), cwd);
+  const exitCode = results.some((r) => r.status === "fail") ? 1 : 0;
+  return { results, exitCode };
+}
+
 export function runDoctor(cwd: string, color = true): { report: string; exitCode: number } {
   const results = runAllChecks(realProbes(), cwd);
   const exitCode = results.some((r) => r.status === "fail") ? 1 : 0;

@@ -273,3 +273,38 @@ describe("renderDoctorReport", () => {
     expect(out).toContain("\x1b[");
   });
 });
+
+import { runDoctorJson } from "./doctor";
+
+describe("runDoctorJson", () => {
+  test("returns { results, exitCode } with results being an array", () => {
+    const { results, exitCode } = runDoctorJson(process.cwd());
+    expect(Array.isArray(results)).toBe(true);
+    expect(results.length).toBeGreaterThan(0);
+    expect(typeof exitCode).toBe("number");
+    expect([0, 1]).toContain(exitCode);
+  });
+
+  test("each result has the CheckResult shape", () => {
+    const { results } = runDoctorJson(process.cwd());
+    for (const r of results) {
+      expect(typeof r.name).toBe("string");
+      expect(["ok", "warn", "fail"]).toContain(r.status);
+      // detail and hint are optional strings
+      if (r.detail !== undefined) expect(typeof r.detail).toBe("string");
+      if (r.hint !== undefined) expect(typeof r.hint).toBe("string");
+    }
+  });
+
+  test("results are JSON-serializable without loss", () => {
+    const { results } = runDoctorJson(process.cwd());
+    const roundTripped = JSON.parse(JSON.stringify(results));
+    expect(roundTripped).toEqual(results);
+  });
+
+  test("exitCode is 1 iff any result has status fail", () => {
+    const { results, exitCode } = runDoctorJson(process.cwd());
+    const hasFail = results.some((r) => r.status === "fail");
+    expect(exitCode === 1).toBe(hasFail);
+  });
+});
