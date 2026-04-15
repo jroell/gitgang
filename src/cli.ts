@@ -41,6 +41,7 @@ import {
   findLastAgentBranch,
   findLastPickedBranch,
   formatPrContent,
+  findLastUserMessage,
   formatSessionExport,
   type LoadedSession,
   type SessionEvent,
@@ -2720,6 +2721,7 @@ async function runInteractive(parsed: ParsedArgs): Promise<number> {
           "  /merge        apply last turn's merge plan",
           "  /pr           open PR for last merge",
           "  /diff [agent] show diff vs base for picked or named agent's branch",
+          "  /redo         re-run the last user message as a fresh turn",
           "  /history      show transcript",
           "  /agents       show agent roster",
           "  /set K V      set a runtime knob",
@@ -2850,6 +2852,19 @@ async function runInteractive(parsed: ParsedArgs): Promise<number> {
           `✗ git diff failed: ${err instanceof Error ? err.message : String(err)}\n`,
         );
       }
+    },
+    runRedoCommand: async () => {
+      const lastUser = findLastUserMessage(session.events);
+      if (!lastUser) {
+        process.stdout.write(
+          "Nothing to redo — no previous user message in this session.\n",
+        );
+        return;
+      }
+      process.stdout.write(
+        `↻ Re-executing turn from "${lastUser.text.split("\n")[0].slice(0, 60)}"...\n`,
+      );
+      await executeTurn(lastUser.text, lastUser.forcedMode, executeTurnDeps);
     },
   });
 

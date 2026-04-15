@@ -64,6 +64,7 @@ function makeDeps(overrides: Partial<ReplDeps> = {}): {
     runMergeCommand: async () => {},
     runPrCommand: async () => {},
     runDiffCommand: async () => {},
+    runRedoCommand: async () => {},
     banner: "gitgang interactive (test)",
     ...overrides,
   };
@@ -722,5 +723,22 @@ describe("formatAgentLog", () => {
     expect(promptIdx).toBeGreaterThan(headerIdx);
     expect(stdoutIdx).toBeGreaterThan(promptIdx);
     expect(stderrIdx).toBeGreaterThan(stdoutIdx);
+  });
+});
+
+describe("REPL /redo dispatch", () => {
+  test("/redo invokes runRedoCommand", async () => {
+    let calls = 0;
+    const { input, deps } = makeDeps({
+      runRedoCommand: async () => {
+        calls++;
+      },
+    });
+    const p = runRepl(deps);
+    input.write("/redo\n");
+    input.write("/quit\n");
+    input.end();
+    await p;
+    expect(calls).toBe(1);
   });
 });

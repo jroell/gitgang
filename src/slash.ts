@@ -12,6 +12,7 @@ export type SlashCommand =
   | { kind: "quit" }
   | { kind: "set"; key: string; value: string }
   | { kind: "diff"; target: DiffTarget }
+  | { kind: "redo" }
   | { kind: "unknown"; raw: string };
 
 export function parseSlashCommand(raw: string): SlashCommand {
@@ -48,6 +49,8 @@ export function parseSlashCommand(raw: string): SlashCommand {
       const [key, ...valueParts] = parts;
       return { kind: "set", key, value: valueParts.join(" ") };
     }
+    case "/redo":
+      return { kind: "redo" };
     case "/diff": {
       const target = tail.split(/\s+/).filter(Boolean)[0];
       if (!target) return { kind: "diff", target: "picked" };
