@@ -22,6 +22,7 @@ import * as readline from "node:readline";
 import chalk from "chalk";
 import ora from "ora";
 import { renderSidebar } from "./sidebar.js";
+import { runDoctor } from "./doctor.js";
 import {
   runRepl,
   createRealFanOut,
@@ -932,6 +933,10 @@ function parseDuration(value: string): number | undefined {
 }
 
 function parseArgs(raw: string[]) {
+  // Doctor subcommand — a simple zero-arg environment health check.
+  if (raw[0] === "doctor") {
+    return { subcommand: { kind: "doctor" } } as unknown as ParsedArgs;
+  }
   // Sessions subcommand routing — must run before any other parsing.
   if (raw[0] === "sessions") {
     if (raw[1] === "list") {
@@ -1184,7 +1189,8 @@ interface ParsedArgs {
     | { kind: "sessions_export"; id: string; outputPath?: string }
     | { kind: "sessions_delete"; id: string; confirmed: boolean }
     | { kind: "sessions_prune"; olderThan: string; confirmed: boolean }
-    | { kind: "sessions_search"; query: string; limit: number };
+    | { kind: "sessions_search"; query: string; limit: number }
+    | { kind: "doctor" };
 }
 
 export function normalizeParsedArgs(parsed: ParsedArgs): ParsedArgs {
@@ -2656,6 +2662,11 @@ export async function dispatchMain(parsed: ParsedArgs): Promise<number> {
   }
   if (parsed.subcommand?.kind === "sessions_search") {
     return runSessionsSearch(parsed.subcommand.query, parsed.subcommand.limit);
+  }
+  if (parsed.subcommand?.kind === "doctor") {
+    const { report, exitCode } = runDoctor(process.cwd(), process.stdout.isTTY ?? false);
+    process.stdout.write(report);
+    return exitCode;
   }
   if (parsed.interactive) {
     return runInteractive(parsed);
