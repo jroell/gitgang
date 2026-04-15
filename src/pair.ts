@@ -208,43 +208,130 @@ function getBackend(id: PairAgentId): AgentBackend {
 
 // ─── Stream Message Formatting ────────────────────────────
 
+const TOOL_RESULT_MAX_LINES = 60;
+const DIFF_MAX_LINES = 30;
+const WRITE_PREVIEW_LINES = 25;
+
+function formatToolUse(name: string, input: Record<string, unknown>): string {
+  const lines: string[] = [];
+
+  switch (name) {
+    case "Read": {
+      const path = input.file_path || input.path || "";
+      lines.push(C.hex("#8be9fd").bold(`  Read: ${path}`));
+      break;
+    }
+    case "Edit": {
+      const path = input.file_path || "";
+      lines.push(C.hex("#ffb86c").bold(`  Edit: ${path}`));
+      if (input.old_string) {
+        const oldLines = String(input.old_string).split("\n");
+        const show = oldLines.slice(0, DIFF_MAX_LINES);
+        for (const l of show) lines.push(C.red(`  - ${l}`));
+        if (oldLines.length > DIFF_MAX_LINES) lines.push(C.red.dim(`  ... (${oldLines.length - DIFF_MAX_LINES} more lines removed)`));
+      }
+      if (input.new_string) {
+        const newLines = String(input.new_string).split("\n");
+        const show = newLines.slice(0, DIFF_MAX_LINES);
+        for (const l of show) lines.push(C.green(`  + ${l}`));
+        if (newLines.length > DIFF_MAX_LINES) lines.push(C.green.dim(`  ... (${newLines.length - DIFF_MAX_LINES} more lines added)`));
+      }
+      break;
+    }
+    case "Write": {
+      const path = input.file_path || "";
+      lines.push(C.hex("#50fa7b").bold(`  Write: ${path}`));
+      if (input.content) {
+        const contentLines = String(input.content).split("\n");
+        const show = contentLines.slice(0, WRITE_PREVIEW_LINES);
+        for (const l of show) lines.push(C.dim(`  │ ${l}`));
+        if (contentLines.length > WRITE_PREVIEW_LINES) lines.push(C.dim(`  │ ... (${contentLines.length - WRITE_PREVIEW_LINES} more lines)`));
+      }
+      break;
+    }
+    case "Bash": {
+      const cmd = input.command || input.description || "";
+      lines.push(C.hex("#f1fa8c").bold(`  $ ${cmd}`));
+      break;
+    }
+    case "Glob": {
+      const pattern = input.pattern || "";
+      const path = input.path || "";
+      lines.push(C.hex("#8be9fd")(`  Glob: ${pattern}${path ? ` in ${path}` : ""}`));
+      break;
+    }
+    case "Grep": {
+      const pattern = input.pattern || "";
+      const path = input.path || "";
+      lines.push(C.hex("#8be9fd")(`  Grep: ${pattern}${path ? ` in ${path}` : ""}`));
+      break;
+    }
+    default: {
+      const desc = input.description || input.file_path || "";
+      lines.push(C.hex("#bd93f9")(`  ${name}${desc ? `: ${desc}` : ""}`));
+      break;
+    }
+  }
+
+  return lines.join("\n");
+}
+
+function formatToolResult(content: string): string {
+  const lines = content.split("\n");
+  if (lines.length <= TOOL_RESULT_MAX_LINES) {
+    return C.dim(lines.map(l => `  ${l}`).join("\n"));
+  }
+  const shown = lines.slice(0, TOOL_RESULT_MAX_LINES).map(l => `  ${l}`).join("\n");
+  return C.dim(shown + `\n  ... (${lines.length - TOOL_RESULT_MAX_LINES} more lines)`);
+}
+
 function formatStreamMessage(msg: Record<string, unknown>): string | null {
   if (!msg || !msg.type) return null;
 
   switch (msg.type) {
     case "thinking":
-      if (msg.content) return `💭 ${(msg.content as string).slice(0, 200)}`;
+      if (msg.content) return C.dim.italic(`  💭 ${msg.content}`);
       break;
+
     case "tool_use": {
       const name = (msg.tool_name || msg.name || "unknown") as string;
-      const params = msg.parameters as Record<string, unknown> | undefined;
-      const input = msg.input as Record<string, unknown> | undefined;
-      const desc = params?.description || input?.description || "";
-      return desc ? `🔧 ${name}: ${desc}` : `🔧 ${name}`;
+      const input = (msg.input || msg.parameters || {}) as Record<string, unknown>;
+      return formatToolUse(name, input);
     }
-    case "tool_result":
-      if (msg.content) {
-        const preview = typeof msg.content === "string"
-          ? msg.content.slice(0, 120)
-          : JSON.stringify(msg.content).slice(0, 120);
-        return `📄 ${preview}`;
-      }
-      break;
+
+    case "tool_result": {
+      if (msg.content == null) break;
+      const content = typeof msg.content === "string"
+        ? msg.content
+        : Array.isArray(msg.content)
+          ? (msg.content as Array<{ text?: string }>).map(b => b.text || "").join("\n")
+          : JSON.stringify(msg.content, null, 2);
+      if (!content.trim()) break;
+      return formatToolResult(content);
+    }
+
     case "assistant": {
-      const message = msg.message as { content?: Array<{ type: string; text?: string }> } | undefined;
+      const message = msg.message as { content?: Array<{ type: string; text?: string; name?: string; input?: unknown }> } | undefined;
       if (message?.content) {
+        const parts: string[] = [];
         for (const block of message.content) {
-          if (block.type === "text" && block.text) return block.text;
+          if (block.type === "text" && block.text) parts.push(block.text);
+          if (block.type === "tool_use" && block.name) {
+            parts.push(formatToolUse(block.name, (block.input || {}) as Record<string, unknown>));
+          }
         }
+        if (parts.length > 0) return parts.join("\n");
       }
       if (typeof msg.content === "string") return msg.content;
       break;
     }
+
     case "exec":
-      if (msg.command) return `$ ${msg.command}`;
+      if (msg.command) return C.hex("#f1fa8c")(`  $ ${msg.command}`);
       break;
+
     case "system":
-      if (msg.subtype === "init") return `⚙️  Initialized (${(msg.model as string) || "unknown"})`;
+      if (msg.subtype === "init") return C.dim(`  ⚙️  Initialized (${(msg.model as string) || "unknown"})`);
       break;
   }
   return null;
