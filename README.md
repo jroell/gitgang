@@ -66,6 +66,41 @@ gitgang --task "Refactor API layer" \
 | `--timeoutMs` | Max runtime in milliseconds | `1500000` (25m) |
 | `--no-pr` | Skip GitHub PR creation | Creates PR by default |
 
+## Interactive Mode
+
+Start a conversational session with all three agents:
+
+    gg              # enters interactive mode (no task)
+    gg -i           # same
+    gg -i "how does auth work"   # pre-loads first turn
+
+Every turn sends your message to gemini, claude, and codex in parallel worktrees. A Claude Code orchestrator then inspects the responses, browses the code to verify claims, and synthesizes an answer with:
+
+- Points of agreement across agents
+- Points of disagreement with the orchestrator's verdict and code citations
+- A single best answer
+
+For questions, the turn ends with the synthesis. For code changes, the orchestrator proposes a merge plan that you confirm with `[y/N/e]`.
+
+**Slash commands inside a session:**
+
+    /ask <msg>    force question mode
+    /code <msg>   force code mode
+    /history      print the transcript
+    /agents       show the agent roster and models
+    /set K V      set a runtime knob (e.g. /set automerge on)
+    /help         list commands
+    /quit         exit
+
+**Session management:**
+
+    gg sessions list         # list recent sessions
+    gg sessions show <id>    # print a past session's transcript
+    gg -i --resume           # resume most-recent session
+    gg -i --resume <id>      # resume a specific session
+
+Sessions live under `.gitgang/sessions/<id>/` (auto-added to `.gitignore` on install).
+
 ## 🎮 Interactive Commands
 
 While agents are running, use these slash commands:
