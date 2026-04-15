@@ -8,6 +8,8 @@ import { join } from "node:path";
 import chalk from "chalk";
 import ora from "ora";
 
+const C = chalk;
+
 // ─── Types ────────────────────────────────────────────────
 
 export type PairAgentId = "claude" | "codex";
@@ -694,8 +696,6 @@ function buildCoderResumePrompt(transcript: ConversationTurn[], direction: strin
 }
 
 // ─── Display Helpers ──────────────────────────────────────
-
-const C = chalk;
 
 function renderHeader(opts: PairOpts): string {
   const coderTag = C.hex("#50fa7b").bold(opts.coder.toUpperCase());
