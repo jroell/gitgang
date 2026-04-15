@@ -1047,3 +1047,129 @@ describe("sessions export subcommand parsing", () => {
     expect(p.subcommand).toEqual({ kind: "sessions_show", id: "abc" });
   });
 });
+
+describe("formatSessionsList — Topic column", () => {
+  test("renders Topic column from session.topic", () => {
+    const out = formatSessionsList([
+      {
+        id: "2026-04-15T03-30-00-aaa",
+        startedAt: "2026-04-15T03:30:00Z",
+        turns: 2,
+        reviewer: "codex",
+        topic: "How does auth work in this project?",
+      },
+    ]);
+    expect(out).toContain("Topic");
+    expect(out).toContain("How does auth work in this project?");
+  });
+
+  test("topic missing renders as em-dash", () => {
+    const out = formatSessionsList([
+      {
+        id: "2026-04-15T03-30-00-bbb",
+        startedAt: "2026-04-15T03:30:00Z",
+        turns: 0,
+        reviewer: "codex",
+      },
+    ]);
+    const lastLine = out.split("\n").filter(Boolean).pop()!;
+    expect(lastLine).toContain("—");
+  });
+
+  test("topic truncates to 50 chars with ellipsis", () => {
+    const long = "a".repeat(120);
+    const out = formatSessionsList([
+      {
+        id: "2026-04-15T03-30-00-ccc",
+        startedAt: "2026-04-15T03:30:00Z",
+        turns: 1,
+        reviewer: "codex",
+        topic: long,
+      },
+    ]);
+    const lastLine = out.split("\n").filter(Boolean).pop()!;
+    // Look for the topic portion at end of line
+    expect(lastLine).toContain("…");
+    // Should not contain all 120 chars
+    expect(lastLine).not.toContain("a".repeat(120));
+  });
+
+  test("topic uses only first line of multi-line message", () => {
+    const out = formatSessionsList([
+      {
+        id: "2026-04-15T03-30-00-ddd",
+        startedAt: "2026-04-15T03:30:00Z",
+        turns: 1,
+        reviewer: "codex",
+        topic: "first line\nsecond line\nthird line",
+      },
+    ]);
+    expect(out).toContain("first line");
+    expect(out).not.toContain("second line");
+    expect(out).not.toContain("third line");
+  });
+
+  test("blank topic falls back to em-dash", () => {
+    const out = formatSessionsList([
+      {
+        id: "2026-04-15T03-30-00-eee",
+        startedAt: "2026-04-15T03:30:00Z",
+        turns: 0,
+        reviewer: "codex",
+        topic: "   \n  ",
+      },
+    ]);
+    const lastLine = out.split("\n").filter(Boolean).pop()!;
+    expect(lastLine).toContain("—");
+  });
+
+  test("header uses Topic instead of Reviewer", () => {
+    const out = formatSessionsList([]);
+    // Empty list still says "No sessions found", not the header.
+    expect(out).toContain("No sessions found");
+    const out2 = formatSessionsList([
+      {
+        id: "x",
+        startedAt: "y",
+        turns: 0,
+        reviewer: "codex",
+        topic: "hello",
+      },
+    ]);
+    expect(out2).toContain("Topic");
+    expect(out2.split("\n")[0]).not.toContain("Reviewer");
+  });
+});
+
+describe("sessions delete subcommand parsing", () => {
+  test("'sessions delete <id>' parses without confirmation", () => {
+    const p = parseArgs(["sessions", "delete", "abc"]);
+    expect(p.subcommand).toEqual({
+      kind: "sessions_delete",
+      id: "abc",
+      confirmed: false,
+    });
+  });
+
+  test("'sessions delete <id> --yes' marks confirmed", () => {
+    const p = parseArgs(["sessions", "delete", "abc", "--yes"]);
+    expect(p.subcommand).toEqual({
+      kind: "sessions_delete",
+      id: "abc",
+      confirmed: true,
+    });
+  });
+
+  test("'sessions delete <id> -y' short form also works", () => {
+    const p = parseArgs(["sessions", "delete", "abc", "-y"]);
+    expect(p.subcommand).toEqual({
+      kind: "sessions_delete",
+      id: "abc",
+      confirmed: true,
+    });
+  });
+
+  test("'sessions delete' without id throws helpful usage error", () => {
+    expect(() => parseArgs(["sessions", "delete"])).toThrow(/usage:/);
+  });
+});
