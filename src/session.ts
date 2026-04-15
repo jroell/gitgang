@@ -1,7 +1,11 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, appendFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { AgentId } from "./cli";
+import type { ForcedMode } from "./slash";
+
+// Temporary placeholder — replaced by Task 6 with: import type { OrchestratorOutput } from "./orchestrator";
+type OrchestratorOutput = unknown;
 
 export type Automerge = "on" | "off" | "ask";
 
@@ -55,4 +59,43 @@ export function createSession(
   writeFileSync(logPath, "");
 
   return { id, dir, logPath, debugDir, worktreesDir, metadata };
+}
+
+export type SessionEvent =
+  | { ts: string; turn: number; type: "user"; text: string; forcedMode: ForcedMode }
+  | { ts: string; turn: number; type: "agent_start"; agent: AgentId; branch: string }
+  | {
+      ts: string;
+      turn: number;
+      type: "agent_end";
+      agent: AgentId;
+      status: "ok" | "failed" | "timeout";
+      diffSummary: string;
+    }
+  | { ts: string; turn: number; type: "orchestrator"; payload: OrchestratorOutput }
+  | {
+      ts: string;
+      turn: number;
+      type: "merge";
+      branch: string;
+      outcome: "merged" | "declined" | "pr_only";
+    };
+
+export function appendEvent(logPath: string, event: SessionEvent): void {
+  appendFileSync(logPath, JSON.stringify(event) + "\n");
+}
+
+export function readEvents(logPath: string): SessionEvent[] {
+  if (!existsSync(logPath)) return [];
+  const raw = readFileSync(logPath, "utf8");
+  const out: SessionEvent[] = [];
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      out.push(JSON.parse(line) as SessionEvent);
+    } catch {
+      // malformed line; skip
+    }
+  }
+  return out;
 }
