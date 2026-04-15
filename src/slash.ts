@@ -26,6 +26,7 @@ export type SlashCommand =
   | { kind: "set"; key: string; value: string }
   | { kind: "diff"; target: DiffTarget }
   | { kind: "redo" }
+  | { kind: "clear" }
   | { kind: "unknown"; raw: string };
 
 function isAgentId(value: string): value is AgentId {
@@ -68,6 +69,8 @@ export function parseSlashCommand(raw: string): SlashCommand {
     }
     case "/redo":
       return { kind: "redo" };
+    case "/clear":
+      return { kind: "clear" };
     case "/only":
     case "/skip": {
       // /only <agent> <message...> or /skip <agent> <message...>

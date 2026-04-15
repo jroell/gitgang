@@ -2806,6 +2806,7 @@ async function runInteractive(parsed: ParsedArgs): Promise<number> {
           "  /redo         re-run the last user message as a fresh turn",
           "  /only <agent> <msg>  run this single turn with only one agent",
           "  /skip <agent> <msg>  run this single turn skipping one agent",
+          "  /clear        forget conversation so far (log stays on disk)",
           "  /history      show transcript",
           "  /agents       show agent roster",
           "  /set K V      set a runtime knob",
@@ -2949,6 +2950,19 @@ async function runInteractive(parsed: ParsedArgs): Promise<number> {
         `↻ Re-executing turn from "${lastUser.text.split("\n")[0].slice(0, 60)}"...\n`,
       );
       await executeTurn(lastUser.text, lastUser.forcedMode, executeTurnDeps);
+    },
+    runClearCommand: async () => {
+      const clearEvent: SessionEvent = {
+        ts: new Date().toISOString(),
+        turn: 0,
+        type: "clear",
+      };
+      appendEvent(session.logPath, clearEvent);
+      session.events.push(clearEvent);
+      process.stdout.write(
+        "✓ Conversation context cleared. Past turns stay on disk " +
+          "(`gg sessions show` still shows them) but won't feed the next turn's context.\n",
+      );
     },
   });
 

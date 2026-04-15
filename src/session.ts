@@ -78,7 +78,8 @@ export type SessionEvent =
       type: "merge";
       branch: string;
       outcome: "merged" | "declined" | "pr_only";
-    };
+    }
+  | { ts: string; turn: number; type: "clear" };
 
 export function appendEvent(logPath: string, event: SessionEvent): void {
   appendFileSync(logPath, JSON.stringify(event) + "\n");
@@ -166,8 +167,13 @@ export function loadSession(dir: string): LoadedSession {
 export function reconstructHistory(
   events: SessionEvent[],
 ): Array<{ turn: number; user: string; assistant: string }> {
+  // /clear appends a "clear" event; reconstructHistory honors only the events
+  // that arrive strictly AFTER the most recent clear. Prior turns remain on
+  // disk (visible in `sessions show` / `sessions export`) but don't feed the
+  // next turn's context.
+  const scoped = eventsAfterLastClear(events);
   const byTurn = new Map<number, { user?: string; assistant?: string }>();
-  for (const e of events) {
+  for (const e of scoped) {
     if (e.type === "user") {
       const rec = byTurn.get(e.turn) ?? {};
       rec.user = e.text;
@@ -185,6 +191,21 @@ export function reconstructHistory(
     }
   }
   return result;
+}
+
+/**
+ * Return events strictly after the most recent "clear" event in the log.
+ * Pure function. If no clear event exists, returns the full array.
+ */
+export function eventsAfterLastClear(events: SessionEvent[]): SessionEvent[] {
+  let lastClearIndex = -1;
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].type === "clear") {
+      lastClearIndex = i;
+      break;
+    }
+  }
+  return lastClearIndex === -1 ? events : events.slice(lastClearIndex + 1);
 }
 
 /**
@@ -523,8 +544,12 @@ export function formatSessionExport(
 export function findLastUserMessage(
   events: SessionEvent[],
 ): { text: string; forcedMode: ForcedMode; turn: number } | null {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const e = events[i];
+  // /redo respects /clear: a user message before the most recent clear is no
+  // longer "the last" for redo purposes. If you cleared, there's no prior
+  // turn to redo.
+  const scoped = eventsAfterLastClear(events);
+  for (let i = scoped.length - 1; i >= 0; i--) {
+    const e = scoped[i];
     if (e.type === "user") {
       return { text: e.text, forcedMode: e.forcedMode, turn: e.turn };
     }

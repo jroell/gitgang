@@ -197,3 +197,15 @@ describe("/only and /skip", () => {
     });
   });
 });
+
+describe("/clear", () => {
+  test("/clear returns clear command", () => {
+    expect(parseSlashCommand("/clear")).toEqual({ kind: "clear" });
+  });
+  test("/clear tolerates whitespace", () => {
+    expect(parseSlashCommand("  /clear  ")).toEqual({ kind: "clear" });
+  });
+  test("/clear with extra args still clear (args ignored)", () => {
+    expect(parseSlashCommand("/clear just do it")).toEqual({ kind: "clear" });
+  });
+});

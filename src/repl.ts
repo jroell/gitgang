@@ -25,6 +25,7 @@ export type ReplDeps = {
   runPrCommand: () => Promise<void>;
   runDiffCommand: (target: DiffTarget) => Promise<void>;
   runRedoCommand: () => Promise<void>;
+  runClearCommand: () => Promise<void>;
 };
 
 export async function runRepl(deps: ReplDeps): Promise<void> {
@@ -71,6 +72,9 @@ export async function runRepl(deps: ReplDeps): Promise<void> {
         break;
       case "redo":
         await deps.runRedoCommand();
+        break;
+      case "clear":
+        await deps.runClearCommand();
         break;
       case "unknown":
         deps.output.write(`Unknown command: ${cmd.raw}\n`);

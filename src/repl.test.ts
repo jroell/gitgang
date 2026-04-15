@@ -66,6 +66,7 @@ function makeDeps(overrides: Partial<ReplDeps> = {}): {
     runPrCommand: async () => {},
     runDiffCommand: async () => {},
     runRedoCommand: async () => {},
+    runClearCommand: async () => {},
     banner: "gitgang interactive (test)",
     ...overrides,
   };
@@ -845,5 +846,22 @@ describe("executeTurn with agent filter", () => {
     });
     await realExecuteTurn("test", null, deps);
     expect(receivedAgentIds[0]).toBeUndefined();
+  });
+});
+
+describe("REPL /clear dispatch", () => {
+  test("/clear invokes runClearCommand", async () => {
+    let calls = 0;
+    const { input, deps } = makeDeps({
+      runClearCommand: async () => {
+        calls++;
+      },
+    });
+    const p = runRepl(deps);
+    input.write("/clear\n");
+    input.write("/quit\n");
+    input.end();
+    await p;
+    expect(calls).toBe(1);
   });
 });
