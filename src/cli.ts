@@ -2587,6 +2587,8 @@ async function runInteractive(parsed: ParsedArgs): Promise<number> {
     session = loadSession(created.dir);
   }
 
+  cleanOrphanedWorktrees(session.worktreesDir, process.stderr);
+
   const fanOut = createRealFanOut({
     agentIds: parsed.activeAgents?.length ? parsed.activeAgents : ["gemini", "claude", "codex"],
     models,
@@ -2757,6 +2759,38 @@ function runSessionsShow(id: string): number {
   const loaded = loadSession(dir);
   process.stdout.write(formatSessionShow(loaded.events));
   return 0;
+}
+
+/**
+ * Clean up any turn-N/ subdirs left behind by a crashed prior session.
+ * Called at interactive session start. Best-effort — failures are logged
+ * but do not abort startup.
+ */
+export function cleanOrphanedWorktrees(
+  worktreesDir: string,
+  stderr: NodeJS.WritableStream,
+): number {
+  if (!existsSync(worktreesDir)) return 0;
+  const turnDirs = readdirSync(worktreesDir).filter((name) => name.startsWith("turn-"));
+  if (turnDirs.length === 0) return 0;
+  let cleaned = 0;
+  for (const name of turnDirs) {
+    const path = join(worktreesDir, name);
+    try {
+      rmSync(path, { recursive: true, force: true });
+      cleaned++;
+    } catch (err) {
+      stderr.write(
+        `⚠ could not remove orphaned worktree ${path}: ${(err as Error).message}\n`,
+      );
+    }
+  }
+  if (cleaned > 0) {
+    stderr.write(
+      `ℹ cleaned up ${cleaned} orphaned turn worktree${cleaned === 1 ? "" : "s"} from prior session\n`,
+    );
+  }
+  return cleaned;
 }
 
 function mostRecentSessionDir(root: string): string {

@@ -967,3 +967,40 @@ describe("sessions list/show formatting", () => {
     expect(formatSessionsList([])).toContain("No sessions");
   });
 });
+
+import { cleanOrphanedWorktrees } from "./cli";
+import { PassThrough } from "node:stream";
+
+describe("cleanOrphanedWorktrees", () => {
+  test("removes turn-N dirs and reports count", () => {
+    const dir = createTempDir();
+    mkdirSync(join(dir, "turn-1"), { recursive: true });
+    mkdirSync(join(dir, "turn-2"), { recursive: true });
+    mkdirSync(join(dir, "not-a-turn"), { recursive: true });
+    const stderr = new PassThrough();
+    const chunks: Buffer[] = [];
+    stderr.on("data", (c) => chunks.push(c));
+    const count = cleanOrphanedWorktrees(dir, stderr);
+    expect(count).toBe(2);
+    expect(existsSync(join(dir, "turn-1"))).toBe(false);
+    expect(existsSync(join(dir, "turn-2"))).toBe(false);
+    expect(existsSync(join(dir, "not-a-turn"))).toBe(true);
+    expect(Buffer.concat(chunks).toString("utf8")).toMatch(/cleaned up 2/);
+    cleanup(dir);
+  });
+
+  test("returns 0 silently when no orphans", () => {
+    const dir = createTempDir();
+    const stderr = new PassThrough();
+    const chunks: Buffer[] = [];
+    stderr.on("data", (c) => chunks.push(c));
+    expect(cleanOrphanedWorktrees(dir, stderr)).toBe(0);
+    expect(chunks).toHaveLength(0);
+    cleanup(dir);
+  });
+
+  test("returns 0 when worktreesDir does not exist", () => {
+    const stderr = new PassThrough();
+    expect(cleanOrphanedWorktrees("/nonexistent/path/xyz", stderr)).toBe(0);
+  });
+});
