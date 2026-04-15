@@ -22,6 +22,13 @@ import {
   resolveModels,
   applyModelOverrides,
   isAgentId,
+  createWorktree,
+  applyMergePlan,
+  applyInteractiveMergePlan,
+  spawnProcess,
+  formatSessionsList,
+  formatSessionShow,
+  type SessionSummary,
 } from "./cli";
 
 function createTempDir(): string {
@@ -775,5 +782,146 @@ describe("Per-agent model override flags (--model-*)", () => {
     expect(parsed.dryRun).toBe(true);
     expect(parsed.activeAgents).toEqual(["gemini", "claude"]);
     expect(parsed.task).toBe("Build it");
+  });
+});
+
+describe("exports for interactive mode", () => {
+  test("createWorktree is exported", () => {
+    expect(typeof createWorktree).toBe("function");
+  });
+  test("applyMergePlan is exported", () => {
+    expect(typeof applyMergePlan).toBe("function");
+  });
+  test("applyInteractiveMergePlan is exported", () => {
+    expect(typeof applyInteractiveMergePlan).toBe("function");
+    expect(applyInteractiveMergePlan.length).toBe(3);
+  });
+  test("applyInteractiveMergePlan rejects empty branches", async () => {
+    await expect(
+      applyInteractiveMergePlan("/tmp", "main", {
+        pick: "claude",
+        branches: [],
+        rationale: "none",
+        followups: [],
+      }),
+    ).rejects.toThrow(/no branches/);
+  });
+  test("systemConstraints is exported", () => {
+    expect(typeof systemConstraints).toBe("function");
+  });
+  test("featurePrompt is exported", () => {
+    expect(typeof featurePrompt).toBe("function");
+  });
+  test("spawnProcess is exported", () => {
+    expect(typeof spawnProcess).toBe("function");
+  });
+});
+
+describe("interactive mode flag parsing", () => {
+  test("bare gg implies interactive", () => {
+    const p = parseArgs([]);
+    expect(p.interactive).toBe(true);
+  });
+
+  test("-i flag enables interactive", () => {
+    const p = parseArgs(["-i"]);
+    expect(p.interactive).toBe(true);
+  });
+
+  test("--interactive enables interactive", () => {
+    const p = parseArgs(["--interactive"]);
+    expect(p.interactive).toBe(true);
+  });
+
+  test("gg 'task' stays one-shot", () => {
+    const p = parseArgs(["do thing"]);
+    expect(p.interactive).toBe(false);
+    expect(p.task).toBe("do thing");
+  });
+
+  test("-i 'opener' sets first message", () => {
+    const p = parseArgs(["-i", "opener text"]);
+    expect(p.interactive).toBe(true);
+    expect(p.opener).toBe("opener text");
+  });
+
+  test("--resume without value resumes most recent", () => {
+    const p = parseArgs(["-i", "--resume"]);
+    expect(p.resume).toEqual({ mode: "latest" });
+  });
+
+  test("--resume with id resumes specific", () => {
+    const p = parseArgs(["-i", "--resume", "2026-04-14T20-00-00-abc123"]);
+    expect(p.resume).toEqual({ mode: "id", id: "2026-04-14T20-00-00-abc123" });
+  });
+
+  test("--automerge on|off|ask parses", () => {
+    expect(parseArgs(["-i", "--automerge", "on"]).automerge).toBe("on");
+    expect(parseArgs(["-i", "--automerge", "off"]).automerge).toBe("off");
+    expect(parseArgs(["-i", "--automerge", "ask"]).automerge).toBe("ask");
+  });
+
+  test("sessions list subcommand", () => {
+    const p = parseArgs(["sessions", "list"]);
+    expect(p.subcommand).toEqual({ kind: "sessions_list" });
+  });
+
+  test("sessions show ID subcommand", () => {
+    const p = parseArgs(["sessions", "show", "abc"]);
+    expect(p.subcommand).toEqual({ kind: "sessions_show", id: "abc" });
+  });
+});
+
+describe("main dispatch", () => {
+  test("exports dispatchMain wrapper", async () => {
+    const mod = await import("./cli");
+    expect(typeof mod.dispatchMain).toBe("function");
+  });
+});
+
+describe("sessions list/show formatting", () => {
+  test("formatSessionsList renders one line per session", () => {
+    const s = formatSessionsList([
+      {
+        id: "2026-04-14T20-00-00-abc",
+        startedAt: "2026-04-14T20:00:00Z",
+        turns: 5,
+        reviewer: "codex",
+      },
+      {
+        id: "2026-04-13T12-00-00-def",
+        startedAt: "2026-04-13T12:00:00Z",
+        turns: 2,
+        reviewer: "codex",
+      },
+    ]);
+    expect(s).toContain("2026-04-14T20-00-00-abc");
+    expect(s).toContain("2026-04-13T12-00-00-def");
+    expect(s).toContain("5");
+    expect(s).toContain("2");
+  });
+
+  test("formatSessionShow prints events in order", () => {
+    const s = formatSessionShow([
+      { ts: "t1", turn: 1, type: "user", text: "hi", forcedMode: null },
+      {
+        ts: "t2",
+        turn: 1,
+        type: "orchestrator",
+        payload: {
+          intent: "ask",
+          agreement: [],
+          disagreement: [],
+          bestAnswer: "yo",
+        },
+      },
+    ]);
+    expect(s).toContain("turn 1");
+    expect(s).toContain("you: hi");
+    expect(s).toContain("gitgang: yo");
+  });
+
+  test("formatSessionsList shows message when empty", () => {
+    expect(formatSessionsList([])).toContain("No sessions");
   });
 });

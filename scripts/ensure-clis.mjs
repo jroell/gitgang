@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, appendFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const REQUIRED_CLIS = [
@@ -114,3 +114,22 @@ for (const cli of REQUIRED_CLIS) {
     console.warn(`⚠️  Unexpected error while ensuring ${cli.command}:`, err);
   }
 }
+
+function ensureGitignoreEntry() {
+  const gitignore = resolve(process.cwd(), ".gitignore");
+  if (!existsSync(gitignore)) return; // Not a git repo root; skip.
+  const contents = readFileSync(gitignore, "utf8");
+  if (
+    contents
+      .split("\n")
+      .some((l) => l.trim() === ".gitgang/" || l.trim() === ".gitgang")
+  ) {
+    return;
+  }
+  appendFileSync(
+    gitignore,
+    (contents.endsWith("\n") ? "" : "\n") + "\n# gitgang interactive sessions\n.gitgang/\n",
+  );
+}
+
+ensureGitignoreEntry();

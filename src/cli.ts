@@ -7,7 +7,9 @@ import {
   mkdirSync,
   appendFileSync,
   readFileSync,
+  readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
   chmodSync,
   realpathSync,
@@ -20,6 +22,15 @@ import * as readline from "node:readline";
 import chalk from "chalk";
 import ora from "ora";
 import { renderSidebar } from "./sidebar.js";
+import {
+  runRepl,
+  createRealFanOut,
+  createRealOrchestrator,
+  executeTurn,
+  type ExecuteTurnDeps,
+} from "./repl.js";
+import type { MergePlan as OrchestratorMergePlan } from "./orchestrator.js";
+import { createSession, loadSession, type LoadedSession, type SessionEvent } from "./session.js";
 
 const VERSION = "1.7.0";
 const REQUIRED_BINARIES = ["git", "gemini", "claude", "codex"] as const;
@@ -902,6 +913,17 @@ function parseDuration(value: string): number | undefined {
 }
 
 function parseArgs(raw: string[]) {
+  // Sessions subcommand routing — must run before any other parsing.
+  if (raw[0] === "sessions") {
+    if (raw[1] === "list") {
+      return { subcommand: { kind: "sessions_list" } } as unknown as ParsedArgs;
+    }
+    if (raw[1] === "show" && raw[2]) {
+      return { subcommand: { kind: "sessions_show", id: raw[2] } } as unknown as ParsedArgs;
+    }
+    throw new Error("usage: gg sessions list | gg sessions show <id>");
+  }
+
   let task: string | undefined;
   let rounds = 3;
   let yolo = true;
@@ -914,6 +936,12 @@ function parseArgs(raw: string[]) {
   let postMergeChecks: string[] = [];
   let soloMode = false;
   let modelOverrides: Partial<Record<AgentId, string>> = {};
+  let interactive = false;
+  let interactiveExplicit = false;
+  let opener: string | undefined;
+  let resume: ParsedArgs["resume"] | undefined;
+  let automerge: ParsedArgs["automerge"] | undefined;
+  const positional: string[] = [];
 
   const bool = (v?: string) =>
     ["1", "true", "yes", "on"].includes((v || "").toLowerCase());
@@ -921,6 +949,26 @@ function parseArgs(raw: string[]) {
   for (let i = 0; i < raw.length; i++) {
     const token = raw[i];
     switch (token) {
+      case "-i":
+      case "--interactive":
+        interactive = true;
+        interactiveExplicit = true;
+        break;
+      case "--resume":
+        if (i + 1 < raw.length && !raw[i + 1].startsWith("-")) {
+          resume = { mode: "id", id: raw[++i] };
+        } else {
+          resume = { mode: "latest" };
+        }
+        break;
+      case "--automerge": {
+        if (i + 1 >= raw.length) throw new Error("--automerge requires on|off|ask");
+        const v = raw[++i];
+        if (v !== "on" && v !== "off" && v !== "ask")
+          throw new Error("--automerge must be one of: on, off, ask");
+        automerge = v;
+        break;
+      }
       case "--task":
         if (i + 1 >= raw.length) throw new Error("--task requires a value");
         task = raw[++i];
@@ -995,14 +1043,34 @@ function parseArgs(raw: string[]) {
         modelOverrides.codex = raw[++i];
         break;
       default:
-        if (!token.startsWith("-") && task === undefined) {
-          task = token;
+        if (!token.startsWith("-")) {
+          positional.push(token);
+          if (task === undefined) {
+            task = token;
+          }
         }
         break;
     }
   }
 
-  return normalizeParsedArgs({ task, rounds, yolo, workRoot, timeoutMs, autoPR, dryRun, activeAgents, reviewerAgent, postMergeChecks, soloMode, modelOverrides });
+  // If interactive was requested explicitly and positional args are present,
+  // treat them as the opener (not the one-shot task).
+  if (interactiveExplicit && positional.length > 0) {
+    opener = positional.join(" ");
+    task = undefined;
+  }
+
+  // Default-to-interactive: no task, no explicit mode, no positional args.
+  if (!interactive && !task && positional.length === 0) {
+    interactive = true;
+  }
+
+  const normalized = normalizeParsedArgs({ task, rounds, yolo, workRoot, timeoutMs, autoPR, dryRun, activeAgents, reviewerAgent, postMergeChecks, soloMode, modelOverrides });
+  normalized.interactive = interactive;
+  if (opener !== undefined) normalized.opener = opener;
+  if (resume !== undefined) normalized.resume = resume;
+  if (automerge !== undefined) normalized.automerge = automerge;
+  return normalized;
 }
 
 interface ParsedArgs {
@@ -1018,6 +1086,13 @@ interface ParsedArgs {
   postMergeChecks: string[];
   soloMode: boolean;
   modelOverrides?: Partial<Record<AgentId, string>>;
+  interactive?: boolean;
+  opener?: string;
+  resume?: { mode: "latest" } | { mode: "id"; id: string };
+  automerge?: "on" | "off" | "ask";
+  subcommand?:
+    | { kind: "sessions_list" }
+    | { kind: "sessions_show"; id: string };
 }
 
 export function normalizeParsedArgs(parsed: ParsedArgs): ParsedArgs {
@@ -1847,6 +1922,53 @@ async function applyMergePlan(
   return { ok: true, branch: mergeBranch };
 }
 
+/**
+ * Apply a reviewer-picked merge plan in interactive REPL context.
+ *
+ * Differs from `applyMergePlan`: takes the orchestrator's `MergePlan` shape
+ * ({ pick, branches, rationale, followups }) directly, and performs the
+ * minimum real merge work — checkout base, `git merge --no-ff <branch>`,
+ * abort on conflict.
+ *
+ * Does NOT run post-merge checks or create a PR; `/pr` is a separate REPL
+ * command. Hybrid merges across multiple branches are not yet supported —
+ * this takes `plan.branches[0]` and logs a warning.
+ */
+export async function applyInteractiveMergePlan(
+  repoRoot: string,
+  base: string,
+  plan: OrchestratorMergePlan,
+): Promise<void> {
+  if (!plan.branches || plan.branches.length === 0) {
+    throw new Error("merge plan has no branches to apply");
+  }
+  if (plan.pick === "hybrid" && plan.branches.length > 1) {
+    console.warn(
+      C.yellow(
+        `hybrid merge across ${plan.branches.length} branches not yet supported; using first branch ${plan.branches[0]}`,
+      ),
+    );
+  }
+  const branch = plan.branches[0];
+
+  await git(repoRoot, "checkout", base);
+  try {
+    await git(
+      repoRoot,
+      "merge",
+      "--no-ff",
+      branch,
+      "-m",
+      `merge ${branch} per orchestrator plan`,
+    );
+  } catch (err) {
+    await git(repoRoot, "merge", "--abort").catch(() => {});
+    throw new Error(
+      `merge conflict applying ${branch}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 async function runRevisionRequests(
   opts: Opts,
   revisions: Array<{ agent: AgentId; instructions: string }>,
@@ -2124,6 +2246,18 @@ Usage
   gitgang --task "Do this task" [--rounds N] [--no-yolo] [--workRoot PATH] [--timeout 25m] [--no-pr] [--dry-run] [--agents gemini,claude,codex] [--reviewer codex] [--check "npm test"]
   gitgang --solo claude "Do this task"
 
+Interactive Mode (new in v1.7.0)
+  gg                                Start interactive REPL (no task)
+  gg -i                             Same as above
+  gg -i "opener"                    Pre-load first turn
+  gg -i --automerge on|off|ask      Session-default merge behavior (default: ask)
+  gg -i --resume                    Resume most-recent session
+  gg -i --resume <id>               Resume specific session
+
+Sessions
+  gg sessions list                  List recent sessions
+  gg sessions show <id>             Print a session transcript
+
 Defaults
   rounds=3, yolo=true, workRoot=.ai-worktrees, timeout=25m, agents=gemini,claude,codex, reviewer=codex
 
@@ -2147,24 +2281,14 @@ While running
   );
 }
 
-async function main() {
-  const argv = process.argv.slice(2);
-  if (argv.includes("--help") || argv.includes("-h")) {
-    printHelp();
-    return;
-  }
-  if (argv.includes("--version") || argv.includes("-v")) {
-    console.log(VERSION);
-    return;
-  }
-
-  let { task, rounds, yolo, workRoot, timeoutMs, autoPR, dryRun, activeAgents, reviewerAgent, postMergeChecks, soloMode, modelOverrides } = parseArgs(argv);
+async function existingOneShotMain(parsed: ParsedArgs): Promise<number> {
+  let { task, rounds, yolo, workRoot, timeoutMs, autoPR, dryRun, activeAgents, reviewerAgent, postMergeChecks, soloMode, modelOverrides } = parsed;
   if (modelOverrides && Object.keys(modelOverrides).length > 0) {
     applyModelOverrides(modelOverrides);
   }
   if (!task) {
     printHelp();
-    process.exit(1);
+    return 1;
   }
 
   const repo = await repoRoot();
@@ -2218,7 +2342,7 @@ async function main() {
   if (dryRun) {
     banner("Dry Run — no agents launched", C.yellow);
     console.log(C.gray("Configuration validated. Exiting without running agents."));
-    return;
+    return 0;
   }
 
   console.log(
@@ -2422,8 +2546,243 @@ async function main() {
     }
   }
 
-  // Ensure process exits cleanly
-  process.exit(finalStatus === "approved" ? 0 : 1);
+  return finalStatus === "approved" ? 0 : 1;
+}
+
+export async function dispatchMain(parsed: ParsedArgs): Promise<number> {
+  if (parsed.subcommand?.kind === "sessions_list") {
+    return runSessionsList();
+  }
+  if (parsed.subcommand?.kind === "sessions_show") {
+    return runSessionsShow(parsed.subcommand.id);
+  }
+  if (parsed.interactive) {
+    return runInteractive(parsed);
+  }
+  return existingOneShotMain(parsed);
+}
+
+async function runInteractive(parsed: ParsedArgs): Promise<number> {
+  const repo = await repoRoot();
+  try {
+    await ensureCleanTree(repo);
+  } catch (err) {
+    process.stderr.write(`${(err as Error).message}\n`);
+    process.stderr.write("Commit or stash changes before starting an interactive session.\n");
+    return 1;
+  }
+  const baseBranch = await currentBranch(repo);
+  const sessionsRoot = resolve(repo, ".gitgang", "sessions");
+  mkdirSync(sessionsRoot, { recursive: true });
+  const models = resolveModels();
+
+  let session: LoadedSession;
+  if (parsed.resume?.mode === "latest") {
+    session = loadSession(mostRecentSessionDir(sessionsRoot));
+  } else if (parsed.resume?.mode === "id") {
+    session = loadSession(join(sessionsRoot, parsed.resume.id));
+  } else {
+    const created = createSession(sessionsRoot, {
+      models,
+      reviewer: parsed.reviewerAgent ?? "codex",
+      automerge: parsed.automerge ?? "ask",
+    });
+    session = loadSession(created.dir);
+  }
+
+  const fanOut = createRealFanOut({
+    agentIds: parsed.activeAgents?.length ? parsed.activeAgents : ["gemini", "claude", "codex"],
+    models,
+    yolo: parsed.yolo ?? true,
+    timeoutMs: parsed.timeoutMs ?? 10 * 60 * 1000,
+    repoRoot: repo,
+  });
+  const spawnOrchestrator = createRealOrchestrator({
+    model: models.claude,
+    yolo: parsed.yolo ?? true,
+    timeoutMs: 15 * 60 * 1000,
+    repoRoot: repo,
+    debugDir: session.debugDir,
+  });
+
+  const executeTurnDeps: ExecuteTurnDeps = {
+    session,
+    repoRoot: repo,
+    base: baseBranch,
+    output: process.stdout,
+    mergeInput: process.stdin,
+    fanOut,
+    spawnOrchestrator,
+    applyMerge: async (plan) => {
+      try {
+        await applyInteractiveMergePlan(repo, baseBranch, plan);
+        return { success: true };
+      } catch (err) {
+        return { success: false, error: (err as Error).message };
+      }
+    },
+    cleanupWorktrees: async (turn: number) => {
+      const turnDir = join(session.worktreesDir, `turn-${turn}`);
+      if (existsSync(turnDir)) rmSync(turnDir, { recursive: true, force: true });
+    },
+  };
+
+  if (parsed.opener && parsed.opener.trim().length > 0) {
+    await executeTurn(parsed.opener, null, executeTurnDeps);
+  }
+
+  await runRepl({
+    input: process.stdin,
+    output: process.stdout,
+    banner: `gitgang v${VERSION} interactive — session ${session.id}`,
+    executeTurn: (text, forcedMode) => executeTurn(text, forcedMode, executeTurnDeps),
+    showHistory: async () => {
+      for (const e of session.events) {
+        if (e.type === "user") process.stdout.write(`[turn ${e.turn}] you: ${e.text}\n`);
+        if (e.type === "orchestrator")
+          process.stdout.write(`[turn ${e.turn}] gitgang: ${e.payload.bestAnswer}\n`);
+      }
+    },
+    showAgents: async () => {
+      process.stdout.write(
+        `Agents: ${Object.entries(models).map(([a, m]) => `${a}=${m}`).join(", ")}\n`,
+      );
+    },
+    showHelp: async () => {
+      process.stdout.write(
+        [
+          "Commands:",
+          "  /ask <msg>   force question mode",
+          "  /code <msg>  force code mode",
+          "  /merge       apply last turn's merge plan",
+          "  /pr          open PR for last merge",
+          "  /history     show transcript",
+          "  /agents      show agent roster",
+          "  /set K V     set a runtime knob",
+          "  /help        this message",
+          "  /quit        exit",
+          "",
+        ].join("\n"),
+      );
+    },
+    runSetCommand: async (key, value) => {
+      if (key === "automerge" && (value === "on" || value === "off" || value === "ask")) {
+        session.metadata.automerge = value;
+        process.stdout.write(`automerge = ${value}\n`);
+      } else {
+        process.stdout.write(`Unknown or unsupported /set ${key} ${value}\n`);
+      }
+    },
+    runMergeCommand: async () => {
+      process.stdout.write("(/merge not yet implemented — see v1.7.1)\n");
+    },
+    runPrCommand: async () => {
+      process.stdout.write("(/pr not yet implemented — see v1.7.1)\n");
+    },
+  });
+
+  return 0;
+}
+
+export type SessionSummary = {
+  id: string;
+  startedAt: string;
+  turns: number;
+  reviewer: AgentId;
+};
+
+export function formatSessionsList(sessions: SessionSummary[]): string {
+  if (sessions.length === 0) return "No sessions found.\n";
+  const lines: string[] = [];
+  lines.push("ID                                    Started                  Turns  Reviewer");
+  for (const s of sessions) {
+    lines.push(
+      `${s.id.padEnd(38)}  ${s.startedAt.padEnd(20)}  ${String(s.turns).padStart(5)}  ${s.reviewer}`,
+    );
+  }
+  return lines.join("\n") + "\n";
+}
+
+export function formatSessionShow(events: SessionEvent[]): string {
+  const lines: string[] = [];
+  for (const e of events) {
+    if (e.type === "user") {
+      lines.push(`[turn ${e.turn}] you: ${e.text}`);
+    } else if (e.type === "orchestrator") {
+      lines.push(`[turn ${e.turn}] gitgang: ${e.payload.bestAnswer}`);
+    } else if (e.type === "merge") {
+      lines.push(`[turn ${e.turn}] merge: ${e.outcome} (${e.branch})`);
+    }
+  }
+  return lines.join("\n") + "\n";
+}
+
+function runSessionsList(): number {
+  const root = resolve(".gitgang", "sessions");
+  if (!existsSync(root)) {
+    process.stdout.write("No sessions found.\n");
+    return 0;
+  }
+  const summaries: SessionSummary[] = readdirSync(root)
+    .filter((name) => existsSync(join(root, name, "metadata.json")))
+    .map((name) => {
+      const dir = join(root, name);
+      const meta = JSON.parse(readFileSync(join(dir, "metadata.json"), "utf8"));
+      const log = existsSync(join(dir, "session.jsonl"))
+        ? readFileSync(join(dir, "session.jsonl"), "utf8")
+        : "";
+      const turns = new Set(
+        log
+          .split("\n")
+          .filter(Boolean)
+          .map((l) => {
+            try {
+              return JSON.parse(l).turn;
+            } catch {
+              return null;
+            }
+          })
+          .filter((t): t is number => typeof t === "number"),
+      );
+      return { id: meta.id, startedAt: meta.startedAt, turns: turns.size, reviewer: meta.reviewer };
+    })
+    .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  process.stdout.write(formatSessionsList(summaries));
+  return 0;
+}
+
+function runSessionsShow(id: string): number {
+  const dir = resolve(".gitgang", "sessions", id);
+  if (!existsSync(dir)) {
+    process.stderr.write(`Session ${id} not found.\n`);
+    return 1;
+  }
+  const loaded = loadSession(dir);
+  process.stdout.write(formatSessionShow(loaded.events));
+  return 0;
+}
+
+function mostRecentSessionDir(root: string): string {
+  if (!existsSync(root)) throw new Error("no sessions exist yet");
+  const entries = readdirSync(root)
+    .map((name) => ({ name, path: join(root, name), mtime: statSync(join(root, name)).mtimeMs }))
+    .sort((a, b) => b.mtime - a.mtime);
+  if (entries.length === 0) throw new Error("no sessions found");
+  return entries[0].path;
+}
+
+async function main(): Promise<number> {
+  const argv = process.argv.slice(2);
+  if (argv.includes("--help") || argv.includes("-h")) {
+    printHelp();
+    return 0;
+  }
+  if (argv.includes("--version") || argv.includes("-v")) {
+    console.log(VERSION);
+    return 0;
+  }
+  const parsed = parseArgs(argv);
+  return dispatchMain(parsed);
 }
 
 let isDirectRun = false;
@@ -2437,10 +2796,14 @@ if (process.argv[1]) {
 }
 
 if (isDirectRun) {
-  main().catch((err) => {
-    console.error(C.red(String(err?.stack || err)));
-    process.exit(1);
-  });
+  main()
+    .then((code) => {
+      process.exit(code);
+    })
+    .catch((err) => {
+      console.error(C.red(String(err?.stack || err)));
+      process.exit(1);
+    });
 }
 
 export {
@@ -2459,6 +2822,8 @@ export {
   parseReviewerAgent,
   parseDuration,
   parseFirstJson,
+  spawnProcess,
+  createWorktree,
   systemConstraints,
   featurePrompt,
   reviewerPromptJSON,
