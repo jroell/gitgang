@@ -1173,3 +1173,46 @@ describe("sessions delete subcommand parsing", () => {
     expect(() => parseArgs(["sessions", "delete"])).toThrow(/usage:/);
   });
 });
+
+describe("sessions prune subcommand parsing", () => {
+  test("'sessions prune --older-than 30d' parses without confirmation", () => {
+    const p = parseArgs(["sessions", "prune", "--older-than", "30d"]);
+    expect(p.subcommand).toEqual({
+      kind: "sessions_prune",
+      olderThan: "30d",
+      confirmed: false,
+    });
+  });
+
+  test("'sessions prune --older-than 30d --yes' marks confirmed", () => {
+    const p = parseArgs(["sessions", "prune", "--older-than", "30d", "--yes"]);
+    expect(p.subcommand).toEqual({
+      kind: "sessions_prune",
+      olderThan: "30d",
+      confirmed: true,
+    });
+  });
+
+  test("'sessions prune --older-than 12h -y' short form", () => {
+    const p = parseArgs(["sessions", "prune", "--older-than", "12h", "-y"]);
+    expect(p.subcommand).toEqual({
+      kind: "sessions_prune",
+      olderThan: "12h",
+      confirmed: true,
+    });
+  });
+
+  test("'sessions prune' without --older-than throws helpful usage", () => {
+    expect(() => parseArgs(["sessions", "prune"])).toThrow(/usage:/);
+    expect(() => parseArgs(["sessions", "prune"])).toThrow(/older-than/);
+  });
+
+  test("flag order tolerated: --yes before --older-than", () => {
+    const p = parseArgs(["sessions", "prune", "--yes", "--older-than", "7d"]);
+    expect(p.subcommand).toEqual({
+      kind: "sessions_prune",
+      olderThan: "7d",
+      confirmed: true,
+    });
+  });
+});

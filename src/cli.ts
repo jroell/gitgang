@@ -42,6 +42,8 @@ import {
   findLastPickedBranch,
   formatPrContent,
   findLastUserMessage,
+  parseDurationMs,
+  selectSessionsToPrune,
   formatSessionExport,
   type LoadedSession,
   type SessionEvent,
@@ -955,8 +957,29 @@ function parseArgs(raw: string[]) {
         subcommand: { kind: "sessions_delete", id: raw[2], confirmed },
       } as unknown as ParsedArgs;
     }
+    if (raw[1] === "prune") {
+      let olderThan: string | undefined;
+      let confirmed = false;
+      for (let j = 2; j < raw.length; j++) {
+        if (raw[j] === "--older-than" && raw[j + 1]) {
+          olderThan = raw[j + 1];
+          j++;
+        } else if (raw[j] === "--yes" || raw[j] === "-y") {
+          confirmed = true;
+        }
+      }
+      if (!olderThan) {
+        throw new Error(
+          "usage: gg sessions prune --older-than <duration> [--yes]\n" +
+            "  duration: Nd | Nh | Nm | Ns (e.g., 30d, 12h, 90m)",
+        );
+      }
+      return {
+        subcommand: { kind: "sessions_prune", olderThan, confirmed },
+      } as unknown as ParsedArgs;
+    }
     throw new Error(
-      "usage: gg sessions list | gg sessions show <id> | gg sessions export <id> [--output PATH] | gg sessions delete <id> --yes",
+      "usage: gg sessions list | gg sessions show <id> | gg sessions export <id> [--output PATH] | gg sessions delete <id> --yes | gg sessions prune --older-than <duration> [--yes]",
     );
   }
 
@@ -1130,7 +1153,8 @@ interface ParsedArgs {
     | { kind: "sessions_list" }
     | { kind: "sessions_show"; id: string }
     | { kind: "sessions_export"; id: string; outputPath?: string }
-    | { kind: "sessions_delete"; id: string; confirmed: boolean };
+    | { kind: "sessions_delete"; id: string; confirmed: boolean }
+    | { kind: "sessions_prune"; olderThan: string; confirmed: boolean };
 }
 
 export function normalizeParsedArgs(parsed: ParsedArgs): ParsedArgs {
@@ -2597,6 +2621,9 @@ export async function dispatchMain(parsed: ParsedArgs): Promise<number> {
   if (parsed.subcommand?.kind === "sessions_delete") {
     return runSessionsDelete(parsed.subcommand.id, parsed.subcommand.confirmed);
   }
+  if (parsed.subcommand?.kind === "sessions_prune") {
+    return runSessionsPrune(parsed.subcommand.olderThan, parsed.subcommand.confirmed);
+  }
   if (parsed.interactive) {
     return runInteractive(parsed);
   }
@@ -3002,6 +3029,54 @@ function runSessionsDelete(id: string, confirmed: boolean): number {
   }
   rmSync(dir, { recursive: true, force: true });
   process.stdout.write(`Deleted session ${id}.\n`);
+  return 0;
+}
+
+function runSessionsPrune(olderThan: string, confirmed: boolean): number {
+  const ms = parseDurationMs(olderThan);
+  if (ms === null) {
+    process.stderr.write(
+      `Invalid duration "${olderThan}". Use Nd, Nh, Nm, or Ns (e.g., 30d, 12h, 90m, 60s).\n`,
+    );
+    return 1;
+  }
+  const root = resolve(".gitgang", "sessions");
+  if (!existsSync(root)) {
+    process.stdout.write("No sessions to prune.\n");
+    return 0;
+  }
+  const summaries = readdirSync(root)
+    .filter((name) => existsSync(join(root, name, "metadata.json")))
+    .map((name) => {
+      const meta = JSON.parse(readFileSync(join(root, name, "metadata.json"), "utf8"));
+      return { id: meta.id as string, startedAt: meta.startedAt as string };
+    });
+  const ids = selectSessionsToPrune(summaries, ms, Date.now());
+  if (ids.length === 0) {
+    process.stdout.write(
+      `No sessions older than ${olderThan} found (${summaries.length} session${summaries.length === 1 ? "" : "s"} total, all newer).\n`,
+    );
+    return 0;
+  }
+  if (!confirmed) {
+    process.stdout.write(
+      `Would prune ${ids.length} session${ids.length === 1 ? "" : "s"} older than ${olderThan} (dry run; pass --yes to actually delete):\n`,
+    );
+    for (const id of ids) process.stdout.write(`  ${id}\n`);
+    return 0;
+  }
+  let deleted = 0;
+  for (const id of ids) {
+    try {
+      rmSync(join(root, id), { recursive: true, force: true });
+      deleted++;
+    } catch (err) {
+      process.stderr.write(
+        `⚠ failed to delete ${id}: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+    }
+  }
+  process.stdout.write(`Pruned ${deleted} session${deleted === 1 ? "" : "s"}.\n`);
   return 0;
 }
 

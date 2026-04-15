@@ -531,3 +531,49 @@ export function findLastUserMessage(
   }
   return null;
 }
+
+/**
+ * Parse a human duration string (Nd / Nh / Nm / Ns) into milliseconds.
+ * Returns null on invalid input. Pure function.
+ */
+export function parseDurationMs(input: string): number | null {
+  const match = input.trim().match(/^(\d+)\s*([smhd])$/);
+  if (!match) return null;
+  const value = Number(match[1]);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  switch (match[2]) {
+    case "s":
+      return value * 1000;
+    case "m":
+      return value * 60_000;
+    case "h":
+      return value * 3_600_000;
+    case "d":
+      return value * 86_400_000;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Pick the session ids whose startedAt is older than `nowMs - olderThanMs`.
+ * Returns ids in startedAt-ascending order (oldest first) so prune output is
+ * stable and useful. Sessions with unparseable startedAt are skipped silently.
+ *
+ * Pure function — does not touch disk.
+ */
+export function selectSessionsToPrune(
+  sessions: Array<{ id: string; startedAt: string }>,
+  olderThanMs: number,
+  nowMs: number,
+): string[] {
+  const cutoff = nowMs - olderThanMs;
+  const matches: Array<{ id: string; t: number }> = [];
+  for (const s of sessions) {
+    const t = Date.parse(s.startedAt);
+    if (!Number.isFinite(t)) continue;
+    if (t < cutoff) matches.push({ id: s.id, t });
+  }
+  matches.sort((a, b) => a.t - b.t);
+  return matches.map((m) => m.id);
+}
