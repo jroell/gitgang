@@ -1,4 +1,5 @@
 import type { OrchestratorOutput } from "./orchestrator";
+import { renderMarkdown } from "./markdown";
 
 const ANSI = {
   reset: "\x1b[0m",
@@ -28,7 +29,7 @@ export function renderSynthesis(
     output.bestAnswer.length < 200;
 
   lines.push(paint("▸ Answer", ANSI.cyan + ANSI.bold, c));
-  lines.push(output.bestAnswer);
+  lines.push(renderMarkdown(output.bestAnswer, { color: c }));
 
   if (output.agreement.length > 0) {
     lines.push("");
