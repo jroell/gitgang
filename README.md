@@ -98,7 +98,8 @@ For questions, the turn ends with the synthesis. For code changes, the orchestra
 
 **Session management:**
 
-    gg sessions list                      # list recent sessions
+    gg sessions list                      # list recent sessions (with topic)
+    gg sessions delete <id> --yes         # remove a session from disk
     gg sessions show <id>                 # print a past session's transcript
     gg sessions export <id>               # export full markdown transcript to stdout
     gg sessions export <id> --output PATH # write export to a file

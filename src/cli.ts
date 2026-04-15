@@ -949,8 +949,14 @@ function parseArgs(raw: string[]) {
         subcommand: { kind: "sessions_export", id: raw[2], outputPath },
       } as unknown as ParsedArgs;
     }
+    if (raw[1] === "delete" && raw[2]) {
+      const confirmed = raw.slice(3).includes("--yes") || raw.slice(3).includes("-y");
+      return {
+        subcommand: { kind: "sessions_delete", id: raw[2], confirmed },
+      } as unknown as ParsedArgs;
+    }
     throw new Error(
-      "usage: gg sessions list | gg sessions show <id> | gg sessions export <id> [--output PATH]",
+      "usage: gg sessions list | gg sessions show <id> | gg sessions export <id> [--output PATH] | gg sessions delete <id> --yes",
     );
   }
 
@@ -1123,7 +1129,8 @@ interface ParsedArgs {
   subcommand?:
     | { kind: "sessions_list" }
     | { kind: "sessions_show"; id: string }
-    | { kind: "sessions_export"; id: string; outputPath?: string };
+    | { kind: "sessions_export"; id: string; outputPath?: string }
+    | { kind: "sessions_delete"; id: string; confirmed: boolean };
 }
 
 export function normalizeParsedArgs(parsed: ParsedArgs): ParsedArgs {
@@ -2587,6 +2594,9 @@ export async function dispatchMain(parsed: ParsedArgs): Promise<number> {
   if (parsed.subcommand?.kind === "sessions_export") {
     return runSessionsExport(parsed.subcommand.id, parsed.subcommand.outputPath);
   }
+  if (parsed.subcommand?.kind === "sessions_delete") {
+    return runSessionsDelete(parsed.subcommand.id, parsed.subcommand.confirmed);
+  }
   if (parsed.interactive) {
     return runInteractive(parsed);
   }
@@ -2881,15 +2891,29 @@ export type SessionSummary = {
   startedAt: string;
   turns: number;
   reviewer: AgentId;
+  /** First user message in the session, if any — used for the "Topic" column. */
+  topic?: string;
 };
+
+const TOPIC_TRUNCATE = 50;
+
+function truncateTopic(text: string | undefined): string {
+  if (!text) return "—";
+  const firstLine = text.split("\n")[0].trim();
+  if (firstLine.length === 0) return "—";
+  if (firstLine.length <= TOPIC_TRUNCATE) return firstLine;
+  return firstLine.slice(0, TOPIC_TRUNCATE - 1) + "…";
+}
 
 export function formatSessionsList(sessions: SessionSummary[]): string {
   if (sessions.length === 0) return "No sessions found.\n";
   const lines: string[] = [];
-  lines.push("ID                                    Started                  Turns  Reviewer");
+  lines.push(
+    "ID                                    Started                  Turns  Topic",
+  );
   for (const s of sessions) {
     lines.push(
-      `${s.id.padEnd(38)}  ${s.startedAt.padEnd(20)}  ${String(s.turns).padStart(5)}  ${s.reviewer}`,
+      `${s.id.padEnd(38)}  ${s.startedAt.padEnd(20)}  ${String(s.turns).padStart(5)}  ${truncateTopic(s.topic)}`,
     );
   }
   return lines.join("\n") + "\n";
@@ -2936,10 +2960,48 @@ function runSessionsList(): number {
           })
           .filter((t): t is number => typeof t === "number"),
       );
-      return { id: meta.id, startedAt: meta.startedAt, turns: turns.size, reviewer: meta.reviewer };
+      // Find first user event for the Topic column.
+      let topic: string | undefined;
+      for (const line of log.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const evt = JSON.parse(line);
+          if (evt.type === "user" && typeof evt.text === "string") {
+            topic = evt.text;
+            break;
+          }
+        } catch {
+          // skip malformed line
+        }
+      }
+      return {
+        id: meta.id,
+        startedAt: meta.startedAt,
+        turns: turns.size,
+        reviewer: meta.reviewer,
+        topic,
+      };
     })
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
   process.stdout.write(formatSessionsList(summaries));
+  return 0;
+}
+
+function runSessionsDelete(id: string, confirmed: boolean): number {
+  const root = resolve(".gitgang", "sessions");
+  const dir = join(root, id);
+  if (!existsSync(dir)) {
+    process.stderr.write(`Session ${id} not found.\n`);
+    return 1;
+  }
+  if (!confirmed) {
+    process.stderr.write(
+      `Refusing to delete session ${id} without --yes confirmation.\nRun: gg sessions delete ${id} --yes\n`,
+    );
+    return 1;
+  }
+  rmSync(dir, { recursive: true, force: true });
+  process.stdout.write(`Deleted session ${id}.\n`);
   return 0;
 }
 
