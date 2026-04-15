@@ -1,5 +1,28 @@
 # GitGang Changelog
 
+## v1.8.1 — 2026-04-15
+
+Non-git Q&A mode — gitgang now works like Claude Code: you can run `gg -i` from any directory, not just git repos.
+
+**New: read-only Q&A mode outside git**
+
+- Running `gg -i` from a non-git directory no longer fails. Instead, gitgang enters a read-only Q&A mode: agents can read files in your cwd (via their Read/Grep/Glob tools) but are explicitly told not to edit anything. No worktrees, no merges, no `/pr`.
+- Session storage moves to `~/.gitgang/sessions/` globally when outside a repo (inside one, it stays at `<repo>/.gitgang/sessions/` as before).
+- `/merge` and `/pr` surface a friendly "requires a git repo — run `git init` here" message instead of crashing.
+- Clear startup banner explains the mode and points at `git init` for full flow.
+- `gg doctor`'s "git: in repo" check degrades from ✗ to ⚠ — it no longer fails the exit code outside repos, matching how users actually run this tool.
+
+**Implementation highlights**
+
+- New `findRepoRoot(): Promise<string | null>` non-throwing twin of `repoRoot()`. Callers that can tolerate non-git context use it; the one-shot path stays strict.
+- `RealFanOutConfig.noGit` flag: when true, `createRealFanOut` skips worktree creation and runs each agent with `cwd = process.cwd()`. Prompt files go to the logsDir to keep the user's directory clean.
+- `buildTurnPrompt.readOnly`: prepends a prominent READ-ONLY section naming forbidden mutating commands (`git init`, `git commit`, `rm`, `touch`, etc.) and explicitly whitelisting read-only tools (Read, Grep, Glob, `ls`, `cat`, `git log`). The trailing reminder is also swapped to "No file edits. No mutating shell commands."
+- Full suite: 548 tests passing (+11 new, covering `findRepoRoot`, `readOnly` prompt shape, command whitelist, section ordering).
+
+**Migration**: none. Existing git-mode behavior is unchanged.
+
+
+
 ## v1.8.0 — 2026-04-15
 
 Massive additive release. First npm publish since v1.6.0; bundles all work from the in-repo v1.7.0 + v1.7.1 + an overnight 17-feature polish pass. No breaking changes — every existing command still works exactly as in v1.6.0.

@@ -134,10 +134,14 @@ describe("checkGitRepo", () => {
     expect(r.status).toBe("ok");
     expect(r.detail).toBe("/cwd");
   });
-  test("fail when not a git repo", () => {
+  test("warn (not fail) when not a git repo — read-only Q&A mode still works", () => {
     const r = checkGitRepo(makeProbes({ isGitRepo: () => false }), "/cwd");
-    expect(r.status).toBe("fail");
-    expect(r.hint).toMatch(/git init/);
+    expect(r.status).toBe("warn");
+    expect(r.hint).toMatch(/git init|read-only Q&A/);
+  });
+  test("detail mentions the cwd when not in a repo", () => {
+    const r = checkGitRepo(makeProbes({ isGitRepo: () => false }), "/home/alice");
+    expect(r.detail).toContain("/home/alice");
   });
 });
 

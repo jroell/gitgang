@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import type { Readable, Writable } from "node:stream";
 import { resolve, join } from "node:path";
+import { homedir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import * as readline from "node:readline";
@@ -56,7 +57,7 @@ import {
   type SessionEvent,
 } from "./session.js";
 
-const VERSION = "1.8.0";
+const VERSION = "1.8.1";
 const REQUIRED_BINARIES = ["git", "gemini", "claude", "codex"] as const;
 const DEFAULT_AGENT_IDLE_TIMEOUT_MS = Number(
   process.env.GITGANG_AGENT_IDLE_TIMEOUT ?? 7 * 60 * 1000,
@@ -313,6 +314,17 @@ async function ensureCleanTree(cwd: string) {
 async function repoRoot(): Promise<string> {
   const { stdout, exitCode } = await runCommand(["git", "rev-parse", "--show-toplevel"]);
   if (exitCode !== 0) throw new Error("Not in a git repository");
+  return stdout.trim();
+}
+
+/**
+ * Non-throwing variant of `repoRoot()` — returns the git repo root, or `null`
+ * if the caller's cwd is not inside a repo. Used by interactive mode to
+ * fall back into non-git (read-only) session mode instead of bailing.
+ */
+export async function findRepoRoot(): Promise<string | null> {
+  const { stdout, exitCode } = await runCommand(["git", "rev-parse", "--show-toplevel"]);
+  if (exitCode !== 0) return null;
   return stdout.trim();
 }
 
@@ -2735,17 +2747,34 @@ export async function dispatchMain(parsed: ParsedArgs): Promise<number> {
 }
 
 async function runInteractive(parsed: ParsedArgs): Promise<number> {
-  const repo = await repoRoot();
+  // Resolve context: either inside a git repo (full flow) or outside it
+  // (read-only Q&A mode). Non-git mode stores sessions globally under
+  // ~/.gitgang/sessions/ and runs agents in process.cwd() without worktrees.
+  const gitRoot = await findRepoRoot();
+  const isGit = gitRoot !== null;
+  const repo = gitRoot ?? process.cwd();
   const fileConfig = loadConfig(repo);
-  try {
-    await ensureCleanTree(repo);
-  } catch (err) {
-    process.stderr.write(`${(err as Error).message}\n`);
-    process.stderr.write("Commit or stash changes before starting an interactive session.\n");
-    return 1;
+
+  if (isGit) {
+    try {
+      await ensureCleanTree(repo);
+    } catch (err) {
+      process.stderr.write(`${(err as Error).message}\n`);
+      process.stderr.write("Commit or stash changes before starting an interactive session.\n");
+      return 1;
+    }
+  } else {
+    process.stderr.write(
+      "ℹ Not inside a git repository — entering read-only Q&A mode.\n" +
+        "  Agents will answer questions about files in " + repo + " but will not edit them.\n" +
+        "  Run `git init` here for full code-change flow.\n\n",
+    );
   }
-  const baseBranch = await currentBranch(repo);
-  const sessionsRoot = resolve(repo, ".gitgang", "sessions");
+
+  const baseBranch = isGit ? await currentBranch(repo) : "HEAD";
+  const sessionsRoot = isGit
+    ? resolve(repo, ".gitgang", "sessions")
+    : resolve(homedir(), ".gitgang", "sessions");
   mkdirSync(sessionsRoot, { recursive: true });
   const models = resolveModels();
 
@@ -2772,6 +2801,7 @@ async function runInteractive(parsed: ParsedArgs): Promise<number> {
     timeoutMs: parsed.timeoutMs ?? 10 * 60 * 1000,
     repoRoot: repo,
     logsDir: join(session.dir, "logs"),
+    noGit: !isGit,
   });
   const spawnOrchestrator = createRealOrchestrator({
     model: models.claude,
@@ -2790,6 +2820,12 @@ async function runInteractive(parsed: ParsedArgs): Promise<number> {
     fanOut,
     spawnOrchestrator,
     applyMerge: async (plan) => {
+      if (!isGit) {
+        return {
+          success: false,
+          error: "merges require a git repo — run `git init` first for code-change flow",
+        };
+      }
       try {
         await applyInteractiveMergePlan(repo, baseBranch, plan);
         return { success: true };
@@ -2886,6 +2922,12 @@ async function runInteractive(parsed: ParsedArgs): Promise<number> {
       }
     },
     runMergeCommand: async () => {
+      if (!isGit) {
+        process.stdout.write(
+          "/merge requires a git repo. Run `git init` here for code-change flow.\n",
+        );
+        return;
+      }
       const pending = findPendingMergePlan(session.events);
       if (!pending) {
         process.stdout.write(
@@ -2915,6 +2957,12 @@ async function runInteractive(parsed: ParsedArgs): Promise<number> {
       }
     },
     runPrCommand: async () => {
+      if (!isGit) {
+        process.stdout.write(
+          "/pr requires a git repo. Run `git init` here for code-change flow.\n",
+        );
+        return;
+      }
       const merged = findLastMergedBranch(session.events);
       if (!merged) {
         process.stdout.write(

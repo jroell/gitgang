@@ -134,10 +134,13 @@ export function checkGitRepo(probes: DoctorProbes, cwd: string): CheckResult {
   return probes.isGitRepo(cwd)
     ? { name: "git: in repo", status: "ok", detail: cwd }
     : {
+        // Not being in a git repo is a degradation (read-only Q&A mode only),
+        // not a failure — users can still run `gg -i` for questions. `warn`
+        // rather than `fail` so `gg doctor` stays green outside repos.
         name: "git: in repo",
-        status: "fail",
+        status: "warn",
         detail: `${cwd} is not inside a git repository`,
-        hint: "Run `git init` first, or cd into a git repo.",
+        hint: "Run `git init` for full code-change flow, or use read-only Q&A mode.",
       };
 }
 
