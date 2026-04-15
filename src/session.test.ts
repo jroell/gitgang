@@ -653,3 +653,205 @@ describe("formatPrContent", () => {
     expect(result.body).not.toContain("## Merge plan");
   });
 });
+
+import { formatSessionExport } from "./session";
+
+describe("formatSessionExport", () => {
+  const META: SessionMetadata = {
+    id: "2026-04-15T03-00-00-aaaaaa",
+    startedAt: "2026-04-15T03:00:00.000Z",
+    models: { gemini: "gem-3.1", claude: "claude-opus-4-6", codex: "gpt-5.4" },
+    reviewer: "codex",
+    automerge: "ask",
+  };
+
+  test("renders metadata table", () => {
+    const out = formatSessionExport([], META);
+    expect(out).toContain("# gitgang session `2026-04-15T03-00-00-aaaaaa`");
+    expect(out).toContain("| started_at | `2026-04-15T03:00:00.000Z` |");
+    expect(out).toContain("| reviewer | `codex` |");
+    expect(out).toContain("| automerge | `ask` |");
+    expect(out).toContain("| gemini model | `gem-3.1` |");
+    expect(out).toContain("| claude model | `claude-opus-4-6` |");
+    expect(out).toContain("| codex model | `gpt-5.4` |");
+  });
+
+  test("empty session shows placeholder", () => {
+    const out = formatSessionExport([], META);
+    expect(out).toContain("_(empty session — no turns yet)_");
+  });
+
+  test("renders one full turn end-to-end", () => {
+    const events: SessionEvent[] = [
+      {
+        ts: "t1",
+        turn: 1,
+        type: "user",
+        text: "How does authentication work in this project?",
+        forcedMode: null,
+      },
+      {
+        ts: "t2",
+        turn: 1,
+        type: "agent_end",
+        agent: "gemini",
+        status: "ok",
+        diffSummary: "",
+      },
+      {
+        ts: "t3",
+        turn: 1,
+        type: "agent_end",
+        agent: "claude",
+        status: "ok",
+        diffSummary: " src/auth.ts | 5 +-",
+      },
+      {
+        ts: "t4",
+        turn: 1,
+        type: "agent_end",
+        agent: "codex",
+        status: "failed",
+        diffSummary: "",
+      },
+      {
+        ts: "t5",
+        turn: 1,
+        type: "orchestrator",
+        payload: {
+          intent: "ask",
+          agreement: ["uses passport.js", "sessions in redis"],
+          disagreement: [
+            {
+              topic: "error handling",
+              positions: { gemini: "throw", claude: "return null" },
+              verdict: "code throws everywhere",
+              evidence: ["src/auth.ts:42"],
+            },
+          ],
+          bestAnswer: "Auth uses **passport.js** with redis sessions.",
+        },
+      },
+    ];
+    const out = formatSessionExport(events, META);
+    expect(out).toContain("## Turn 1 — How does authentication work in this project?");
+    expect(out).toContain("### You asked");
+    expect(out).toContain("How does authentication work");
+    expect(out).toContain("### Agents");
+    expect(out).toContain("| `gemini` | ok | — |");
+    expect(out).toContain("| `claude` | ok | `src/auth.ts | 5 +-` |");
+    expect(out).toContain("| `codex` | failed | — |");
+    expect(out).toContain("### Synthesis");
+    expect(out).toContain("Auth uses **passport.js**");
+    expect(out).toContain("#### Agreement");
+    expect(out).toContain("- uses passport.js");
+    expect(out).toContain("#### Disagreement");
+    expect(out).toContain("**error handling**");
+    expect(out).toContain("- `gemini`: throw");
+    expect(out).toContain("> Verdict: code throws everywhere");
+    expect(out).toContain("> Evidence: `src/auth.ts:42`");
+  });
+
+  test("forced mode is annotated when set", () => {
+    const events: SessionEvent[] = [
+      { ts: "t", turn: 1, type: "user", text: "explain", forcedMode: "ask" },
+    ];
+    const out = formatSessionExport(events, META);
+    expect(out).toContain("*(forced mode: `ask`)*");
+  });
+
+  test("turn headline truncates at 80 chars and uses first line", () => {
+    const long = "a".repeat(200);
+    const events: SessionEvent[] = [
+      { ts: "t", turn: 1, type: "user", text: `first line of long thing\n${long}`, forcedMode: null },
+    ];
+    const out = formatSessionExport(events, META);
+    expect(out).toContain("## Turn 1 — first line of long thing");
+  });
+
+  test("merge plan section with rationale and branches", () => {
+    const events: SessionEvent[] = [
+      { ts: "t1", turn: 1, type: "user", text: "fix it", forcedMode: null },
+      {
+        ts: "t2",
+        turn: 1,
+        type: "orchestrator",
+        payload: {
+          intent: "code",
+          agreement: [],
+          disagreement: [],
+          bestAnswer: "done",
+          mergePlan: {
+            pick: "claude",
+            branches: ["agents/claude/turn-1"],
+            rationale: "cleanest diff",
+            followups: [],
+          },
+        },
+      },
+    ];
+    const out = formatSessionExport(events, META);
+    expect(out).toContain("#### Merge plan: `claude`");
+    expect(out).toContain("Branches: `agents/claude/turn-1`");
+    expect(out).toContain("Rationale: cleanest diff");
+  });
+
+  test("outcome lists all merge events for a turn", () => {
+    const events: SessionEvent[] = [
+      { ts: "t1", turn: 1, type: "user", text: "x", forcedMode: null },
+      { ts: "t2", turn: 1, type: "merge", branch: "agents/claude/turn-1", outcome: "merged" },
+    ];
+    const out = formatSessionExport(events, META);
+    expect(out).toContain("### Outcome");
+    expect(out).toContain("- `merged`: `agents/claude/turn-1`");
+  });
+
+  test("turns are emitted in numeric order", () => {
+    const events: SessionEvent[] = [
+      { ts: "t", turn: 3, type: "user", text: "third", forcedMode: null },
+      { ts: "t", turn: 1, type: "user", text: "first", forcedMode: null },
+      { ts: "t", turn: 2, type: "user", text: "second", forcedMode: null },
+    ];
+    const out = formatSessionExport(events, META);
+    const idx1 = out.indexOf("Turn 1 — first");
+    const idx2 = out.indexOf("Turn 2 — second");
+    const idx3 = out.indexOf("Turn 3 — third");
+    expect(idx1).toBeGreaterThan(0);
+    expect(idx2).toBeGreaterThan(idx1);
+    expect(idx3).toBeGreaterThan(idx2);
+  });
+
+  test("agreement and disagreement sections are omitted when empty", () => {
+    const events: SessionEvent[] = [
+      { ts: "t1", turn: 1, type: "user", text: "x", forcedMode: null },
+      {
+        ts: "t2",
+        turn: 1,
+        type: "orchestrator",
+        payload: {
+          intent: "ask",
+          agreement: [],
+          disagreement: [],
+          bestAnswer: "ok",
+        },
+      },
+    ];
+    const out = formatSessionExport(events, META);
+    expect(out).not.toContain("#### Agreement");
+    expect(out).not.toContain("#### Disagreement");
+    expect(out).toContain("### Synthesis");
+  });
+
+  test("output is deterministic across repeated calls", () => {
+    const events: SessionEvent[] = [
+      { ts: "t1", turn: 1, type: "user", text: "x", forcedMode: null },
+      {
+        ts: "t2",
+        turn: 1,
+        type: "orchestrator",
+        payload: { intent: "ask", agreement: [], disagreement: [], bestAnswer: "y" },
+      },
+    ];
+    expect(formatSessionExport(events, META)).toBe(formatSessionExport(events, META));
+  });
+});

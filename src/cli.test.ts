@@ -1004,3 +1004,46 @@ describe("cleanOrphanedWorktrees", () => {
     expect(cleanOrphanedWorktrees("/nonexistent/path/xyz", stderr)).toBe(0);
   });
 });
+
+describe("sessions export subcommand parsing", () => {
+  test("'sessions export <id>' parses to subcommand without outputPath", () => {
+    const p = parseArgs(["sessions", "export", "abc123"]);
+    expect(p.subcommand).toEqual({
+      kind: "sessions_export",
+      id: "abc123",
+      outputPath: undefined,
+    });
+  });
+
+  test("'sessions export <id> --output PATH' captures path", () => {
+    const p = parseArgs(["sessions", "export", "abc123", "--output", "/tmp/x.md"]);
+    expect(p.subcommand).toEqual({
+      kind: "sessions_export",
+      id: "abc123",
+      outputPath: "/tmp/x.md",
+    });
+  });
+
+  test("'sessions export <id> -o PATH' short form also works", () => {
+    const p = parseArgs(["sessions", "export", "abc123", "-o", "/tmp/y.md"]);
+    expect(p.subcommand).toEqual({
+      kind: "sessions_export",
+      id: "abc123",
+      outputPath: "/tmp/y.md",
+    });
+  });
+
+  test("'sessions export' without id throws helpful usage error", () => {
+    expect(() => parseArgs(["sessions", "export"])).toThrow(/usage:/);
+  });
+
+  test("'sessions list' still parses correctly (no regression)", () => {
+    const p = parseArgs(["sessions", "list"]);
+    expect(p.subcommand).toEqual({ kind: "sessions_list" });
+  });
+
+  test("'sessions show <id>' still parses correctly (no regression)", () => {
+    const p = parseArgs(["sessions", "show", "abc"]);
+    expect(p.subcommand).toEqual({ kind: "sessions_show", id: "abc" });
+  });
+});

@@ -97,10 +97,12 @@ For questions, the turn ends with the synthesis. For code changes, the orchestra
 
 **Session management:**
 
-    gg sessions list         # list recent sessions
-    gg sessions show <id>    # print a past session's transcript
-    gg -i --resume           # resume most-recent session
-    gg -i --resume <id>      # resume a specific session
+    gg sessions list                      # list recent sessions
+    gg sessions show <id>                 # print a past session's transcript
+    gg sessions export <id>               # export full markdown transcript to stdout
+    gg sessions export <id> --output PATH # write export to a file
+    gg -i --resume                        # resume most-recent session
+    gg -i --resume <id>                   # resume a specific session
 
 Sessions live under `.gitgang/sessions/<id>/` (auto-added to `.gitignore` on install).
 
