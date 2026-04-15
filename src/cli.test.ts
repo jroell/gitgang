@@ -26,6 +26,9 @@ import {
   applyMergePlan,
   applyInteractiveMergePlan,
   spawnProcess,
+  formatSessionsList,
+  formatSessionShow,
+  type SessionSummary,
 } from "./cli";
 
 function createTempDir(): string {
@@ -873,5 +876,52 @@ describe("main dispatch", () => {
   test("exports dispatchMain wrapper", async () => {
     const mod = await import("./cli");
     expect(typeof mod.dispatchMain).toBe("function");
+  });
+});
+
+describe("sessions list/show formatting", () => {
+  test("formatSessionsList renders one line per session", () => {
+    const s = formatSessionsList([
+      {
+        id: "2026-04-14T20-00-00-abc",
+        startedAt: "2026-04-14T20:00:00Z",
+        turns: 5,
+        reviewer: "codex",
+      },
+      {
+        id: "2026-04-13T12-00-00-def",
+        startedAt: "2026-04-13T12:00:00Z",
+        turns: 2,
+        reviewer: "codex",
+      },
+    ]);
+    expect(s).toContain("2026-04-14T20-00-00-abc");
+    expect(s).toContain("2026-04-13T12-00-00-def");
+    expect(s).toContain("5");
+    expect(s).toContain("2");
+  });
+
+  test("formatSessionShow prints events in order", () => {
+    const s = formatSessionShow([
+      { ts: "t1", turn: 1, type: "user", text: "hi", forcedMode: null },
+      {
+        ts: "t2",
+        turn: 1,
+        type: "orchestrator",
+        payload: {
+          intent: "ask",
+          agreement: [],
+          disagreement: [],
+          bestAnswer: "yo",
+        },
+      },
+    ]);
+    expect(s).toContain("turn 1");
+    expect(s).toContain("you: hi");
+    expect(s).toContain("gitgang: yo");
+  });
+
+  test("formatSessionsList shows message when empty", () => {
+    expect(formatSessionsList([])).toContain("No sessions");
   });
 });

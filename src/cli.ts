@@ -30,7 +30,7 @@ import {
   type ExecuteTurnDeps,
 } from "./repl.js";
 import type { MergePlan as OrchestratorMergePlan } from "./orchestrator.js";
-import { createSession, loadSession, type LoadedSession } from "./session.js";
+import { createSession, loadSession, type LoadedSession, type SessionEvent } from "./session.js";
 
 const VERSION = "1.7.0";
 const REQUIRED_BINARIES = ["git", "gemini", "claude", "codex"] as const;
@@ -2664,12 +2664,81 @@ async function runInteractive(parsed: ParsedArgs): Promise<number> {
   return 0;
 }
 
+export type SessionSummary = {
+  id: string;
+  startedAt: string;
+  turns: number;
+  reviewer: AgentId;
+};
+
+export function formatSessionsList(sessions: SessionSummary[]): string {
+  if (sessions.length === 0) return "No sessions found.\n";
+  const lines: string[] = [];
+  lines.push("ID                                    Started                  Turns  Reviewer");
+  for (const s of sessions) {
+    lines.push(
+      `${s.id.padEnd(38)}  ${s.startedAt.padEnd(20)}  ${String(s.turns).padStart(5)}  ${s.reviewer}`,
+    );
+  }
+  return lines.join("\n") + "\n";
+}
+
+export function formatSessionShow(events: SessionEvent[]): string {
+  const lines: string[] = [];
+  for (const e of events) {
+    if (e.type === "user") {
+      lines.push(`[turn ${e.turn}] you: ${e.text}`);
+    } else if (e.type === "orchestrator") {
+      lines.push(`[turn ${e.turn}] gitgang: ${e.payload.bestAnswer}`);
+    } else if (e.type === "merge") {
+      lines.push(`[turn ${e.turn}] merge: ${e.outcome} (${e.branch})`);
+    }
+  }
+  return lines.join("\n") + "\n";
+}
+
 function runSessionsList(): number {
-  console.log("(sessions list — implemented in Task 17)");
+  const root = resolve(".gitgang", "sessions");
+  if (!existsSync(root)) {
+    process.stdout.write("No sessions found.\n");
+    return 0;
+  }
+  const summaries: SessionSummary[] = readdirSync(root)
+    .filter((name) => existsSync(join(root, name, "metadata.json")))
+    .map((name) => {
+      const dir = join(root, name);
+      const meta = JSON.parse(readFileSync(join(dir, "metadata.json"), "utf8"));
+      const log = existsSync(join(dir, "session.jsonl"))
+        ? readFileSync(join(dir, "session.jsonl"), "utf8")
+        : "";
+      const turns = new Set(
+        log
+          .split("\n")
+          .filter(Boolean)
+          .map((l) => {
+            try {
+              return JSON.parse(l).turn;
+            } catch {
+              return null;
+            }
+          })
+          .filter((t): t is number => typeof t === "number"),
+      );
+      return { id: meta.id, startedAt: meta.startedAt, turns: turns.size, reviewer: meta.reviewer };
+    })
+    .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  process.stdout.write(formatSessionsList(summaries));
   return 0;
 }
+
 function runSessionsShow(id: string): number {
-  console.log(`(sessions show ${id} — implemented in Task 17)`);
+  const dir = resolve(".gitgang", "sessions", id);
+  if (!existsSync(dir)) {
+    process.stderr.write(`Session ${id} not found.\n`);
+    return 1;
+  }
+  const loaded = loadSession(dir);
+  process.stdout.write(formatSessionShow(loaded.events));
   return 0;
 }
 
