@@ -853,3 +853,10 @@ describe("interactive mode flag parsing", () => {
     expect(p.subcommand).toEqual({ kind: "sessions_show", id: "abc" });
   });
 });
+
+describe("main dispatch", () => {
+  test("exports dispatchMain wrapper", async () => {
+    const mod = await import("./cli");
+    expect(typeof mod.dispatchMain).toBe("function");
+  });
+});

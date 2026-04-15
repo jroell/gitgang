@@ -7,7 +7,9 @@ import {
   mkdirSync,
   appendFileSync,
   readFileSync,
+  readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
   chmodSync,
   realpathSync,
@@ -20,6 +22,14 @@ import * as readline from "node:readline";
 import chalk from "chalk";
 import ora from "ora";
 import { renderSidebar } from "./sidebar.js";
+import {
+  runRepl,
+  createRealFanOut,
+  createRealOrchestrator,
+  executeTurn,
+  type ExecuteTurnDeps,
+} from "./repl.js";
+import { createSession, loadSession, type LoadedSession } from "./session.js";
 
 const VERSION = "1.7.0";
 const REQUIRED_BINARIES = ["git", "gemini", "claude", "codex"] as const;
@@ -2211,24 +2221,14 @@ While running
   );
 }
 
-async function main() {
-  const argv = process.argv.slice(2);
-  if (argv.includes("--help") || argv.includes("-h")) {
-    printHelp();
-    return;
-  }
-  if (argv.includes("--version") || argv.includes("-v")) {
-    console.log(VERSION);
-    return;
-  }
-
-  let { task, rounds, yolo, workRoot, timeoutMs, autoPR, dryRun, activeAgents, reviewerAgent, postMergeChecks, soloMode, modelOverrides } = parseArgs(argv);
+async function existingOneShotMain(parsed: ParsedArgs): Promise<number> {
+  let { task, rounds, yolo, workRoot, timeoutMs, autoPR, dryRun, activeAgents, reviewerAgent, postMergeChecks, soloMode, modelOverrides } = parsed;
   if (modelOverrides && Object.keys(modelOverrides).length > 0) {
     applyModelOverrides(modelOverrides);
   }
   if (!task) {
     printHelp();
-    process.exit(1);
+    return 1;
   }
 
   const repo = await repoRoot();
@@ -2282,7 +2282,7 @@ async function main() {
   if (dryRun) {
     banner("Dry Run — no agents launched", C.yellow);
     console.log(C.gray("Configuration validated. Exiting without running agents."));
-    return;
+    return 0;
   }
 
   console.log(
@@ -2486,8 +2486,163 @@ async function main() {
     }
   }
 
-  // Ensure process exits cleanly
-  process.exit(finalStatus === "approved" ? 0 : 1);
+  return finalStatus === "approved" ? 0 : 1;
+}
+
+export async function dispatchMain(parsed: ParsedArgs): Promise<number> {
+  if (parsed.subcommand?.kind === "sessions_list") {
+    return runSessionsList();
+  }
+  if (parsed.subcommand?.kind === "sessions_show") {
+    return runSessionsShow(parsed.subcommand.id);
+  }
+  if (parsed.interactive) {
+    return runInteractive(parsed);
+  }
+  return existingOneShotMain(parsed);
+}
+
+async function runInteractive(parsed: ParsedArgs): Promise<number> {
+  const repo = await repoRoot();
+  const sessionsRoot = resolve(repo, ".gitgang", "sessions");
+  mkdirSync(sessionsRoot, { recursive: true });
+  const models = resolveModels();
+
+  let session: LoadedSession;
+  if (parsed.resume?.mode === "latest") {
+    session = loadSession(mostRecentSessionDir(sessionsRoot));
+  } else if (parsed.resume?.mode === "id") {
+    session = loadSession(join(sessionsRoot, parsed.resume.id));
+  } else {
+    const created = createSession(sessionsRoot, {
+      models,
+      reviewer: parsed.reviewerAgent ?? "codex",
+      automerge: parsed.automerge ?? "ask",
+    });
+    session = loadSession(created.dir);
+  }
+
+  const fanOut = createRealFanOut({
+    agentIds: parsed.activeAgents?.length ? parsed.activeAgents : ["gemini", "claude", "codex"],
+    models,
+    yolo: parsed.yolo ?? true,
+    timeoutMs: parsed.timeoutMs ?? 10 * 60 * 1000,
+    repoRoot: repo,
+  });
+  const spawnOrchestrator = createRealOrchestrator({
+    model: models.claude,
+    yolo: parsed.yolo ?? true,
+    timeoutMs: 15 * 60 * 1000,
+    repoRoot: repo,
+    debugDir: session.debugDir,
+  });
+
+  const executeTurnDeps: ExecuteTurnDeps = {
+    session,
+    repoRoot: repo,
+    base: "main",
+    output: process.stdout,
+    mergeInput: process.stdin,
+    fanOut,
+    spawnOrchestrator,
+    applyMerge: async (_plan) => {
+      // Full applyMergePlan wiring is planned for Task 17+; signature expects
+      // (opts, worktrees, decision) which aren't available in REPL context yet.
+      return { success: false, error: "merge not yet wired in interactive mode" };
+    },
+    cleanupWorktrees: async (turn: number) => {
+      const turnDir = join(session.worktreesDir, `turn-${turn}`);
+      if (existsSync(turnDir)) rmSync(turnDir, { recursive: true, force: true });
+    },
+  };
+
+  if (parsed.opener && parsed.opener.trim().length > 0) {
+    await executeTurn(parsed.opener, null, executeTurnDeps);
+  }
+
+  await runRepl({
+    input: process.stdin,
+    output: process.stdout,
+    banner: `gitgang v${VERSION} interactive — session ${session.id}`,
+    executeTurn: (text, forcedMode) => executeTurn(text, forcedMode, executeTurnDeps),
+    showHistory: async () => {
+      for (const e of session.events) {
+        if (e.type === "user") process.stdout.write(`[turn ${e.turn}] you: ${e.text}\n`);
+        if (e.type === "orchestrator")
+          process.stdout.write(`[turn ${e.turn}] gitgang: ${e.payload.bestAnswer}\n`);
+      }
+    },
+    showAgents: async () => {
+      process.stdout.write(
+        `Agents: ${Object.entries(models).map(([a, m]) => `${a}=${m}`).join(", ")}\n`,
+      );
+    },
+    showHelp: async () => {
+      process.stdout.write(
+        [
+          "Commands:",
+          "  /ask <msg>   force question mode",
+          "  /code <msg>  force code mode",
+          "  /merge       apply last turn's merge plan",
+          "  /pr          open PR for last merge",
+          "  /history     show transcript",
+          "  /agents      show agent roster",
+          "  /set K V     set a runtime knob",
+          "  /help        this message",
+          "  /quit        exit",
+          "",
+        ].join("\n"),
+      );
+    },
+    runSetCommand: async (key, value) => {
+      if (key === "automerge" && (value === "on" || value === "off" || value === "ask")) {
+        session.metadata.automerge = value;
+        process.stdout.write(`automerge = ${value}\n`);
+      } else {
+        process.stdout.write(`Unknown or unsupported /set ${key} ${value}\n`);
+      }
+    },
+    runMergeCommand: async () => {
+      process.stdout.write("(/merge not yet implemented — see v1.7.1)\n");
+    },
+    runPrCommand: async () => {
+      process.stdout.write("(/pr not yet implemented — see v1.7.1)\n");
+    },
+  });
+
+  return 0;
+}
+
+function runSessionsList(): number {
+  console.log("(sessions list — implemented in Task 17)");
+  return 0;
+}
+function runSessionsShow(id: string): number {
+  console.log(`(sessions show ${id} — implemented in Task 17)`);
+  return 0;
+}
+
+function mostRecentSessionDir(root: string): string {
+  if (!existsSync(root)) throw new Error("no sessions exist yet");
+  const entries = readdirSync(root)
+    .map((name) => ({ name, path: join(root, name), mtime: statSync(join(root, name)).mtimeMs }))
+    .sort((a, b) => b.mtime - a.mtime);
+  if (entries.length === 0) throw new Error("no sessions found");
+  return entries[0].path;
+}
+
+async function main(): Promise<number> {
+  const argv = process.argv.slice(2);
+  if (argv.includes("--help") || argv.includes("-h")) {
+    printHelp();
+    return 0;
+  }
+  if (argv.includes("--version") || argv.includes("-v")) {
+    console.log(VERSION);
+    return 0;
+  }
+  const parsed = parseArgs(argv);
+  return dispatchMain(parsed);
 }
 
 let isDirectRun = false;
@@ -2501,10 +2656,14 @@ if (process.argv[1]) {
 }
 
 if (isDirectRun) {
-  main().catch((err) => {
-    console.error(C.red(String(err?.stack || err)));
-    process.exit(1);
-  });
+  main()
+    .then((code) => {
+      process.exit(code);
+    })
+    .catch((err) => {
+      console.error(C.red(String(err?.stack || err)));
+      process.exit(1);
+    });
 }
 
 export {
