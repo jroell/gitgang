@@ -154,3 +154,46 @@ describe("buildOrchestratorInput", () => {
     expect(input.forcedMode).toBe("ask");
   });
 });
+import { orchestratorSpawnConfig } from "./orchestrator";
+
+describe("orchestratorSpawnConfig", () => {
+  test("returns command, args, and stdin payload", () => {
+    const input = buildOrchestratorInput({
+      turn: 1,
+      repoRoot: "/repo",
+      userMessage: "x",
+      forcedMode: null,
+      history: [],
+      agents: [],
+    });
+    const config = orchestratorSpawnConfig({
+      input,
+      model: "claude-opus-4-6",
+      yolo: true,
+    });
+    expect(config.command).toBe("claude");
+    expect(config.args).toContain("--print");
+    expect(config.args).toContain("--model");
+    expect(config.args).toContain("claude-opus-4-6");
+    expect(config.args).toContain("--dangerously-skip-permissions");
+    expect(config.stdin).toContain("SYSTEM:");
+    expect(config.stdin).toContain('"userMessage": "x"');
+  });
+
+  test("omits --dangerously-skip-permissions when yolo=false", () => {
+    const input = buildOrchestratorInput({
+      turn: 1,
+      repoRoot: "/r",
+      userMessage: "x",
+      forcedMode: null,
+      history: [],
+      agents: [],
+    });
+    const config = orchestratorSpawnConfig({
+      input,
+      model: "claude-opus-4-6",
+      yolo: false,
+    });
+    expect(config.args).not.toContain("--dangerously-skip-permissions");
+  });
+});
