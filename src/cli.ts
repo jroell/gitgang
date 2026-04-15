@@ -40,6 +40,7 @@ import {
   findLastMergedBranch,
   findLastAgentBranch,
   findLastPickedBranch,
+  formatPrContent,
   type LoadedSession,
   type SessionEvent,
 } from "./session.js";
@@ -2756,7 +2757,21 @@ async function runInteractive(parsed: ParsedArgs): Promise<number> {
         const branch = await currentBranch(repo);
         process.stdout.write(`Pushing ${branch} and opening PR...\n`);
         await git(repo, "push", "-u", "origin", branch);
-        const ghProc = spawnProcess(["gh", "pr", "create", "--fill"], { cwd: repo });
+
+        // Build a structured PR body from the session log instead of relying
+        // on `gh pr create --fill`'s git-log-based generic body.
+        const { title, body } = formatPrContent(session.events, {
+          mergedBranch: merged,
+          sessionId: session.id,
+          gitgangVersion: VERSION,
+        });
+        const bodyFile = join(session.debugDir, "pr-body.md");
+        writeFileSync(bodyFile, body);
+
+        const ghProc = spawnProcess(
+          ["gh", "pr", "create", "--title", title, "--body-file", bodyFile],
+          { cwd: repo },
+        );
         const exitCode = await (ghProc as SpawnedProcess).exited;
         if (exitCode !== 0) {
           process.stdout.write(

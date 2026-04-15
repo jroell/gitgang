@@ -470,3 +470,186 @@ describe("findLastPickedBranch", () => {
     expect(findLastPickedBranch(events)).toBeNull();
   });
 });
+
+import { formatPrContent } from "./session";
+
+describe("formatPrContent", () => {
+  const baseOpts = { mergedBranch: "agents/claude/turn-3", sessionId: "s1", gitgangVersion: "1.7.1" };
+  const mkUser = (turn: number, text: string): SessionEvent => ({
+    ts: "t",
+    turn,
+    type: "user",
+    text,
+    forcedMode: null,
+  });
+  const mkOrch = (turn: number, payload: Partial<{
+    bestAnswer: string;
+    mergePlan: { pick: "claude" | "gemini" | "codex" | "hybrid"; branches: string[]; rationale: string; followups: string[] };
+    disagreement: Array<{ topic: string; positions: Record<string, string>; verdict: string; evidence: string[] }>;
+  }>): SessionEvent => ({
+    ts: "t",
+    turn,
+    type: "orchestrator",
+    payload: {
+      intent: payload.mergePlan ? "code" : "ask",
+      agreement: [],
+      disagreement: payload.disagreement ?? [],
+      bestAnswer: payload.bestAnswer ?? "",
+      ...(payload.mergePlan ? { mergePlan: payload.mergePlan } : {}),
+    },
+  });
+
+  test("title is the first user message", () => {
+    const result = formatPrContent(
+      [mkUser(1, "Add OAuth login flow"), mkOrch(1, { bestAnswer: "done" })],
+      baseOpts,
+    );
+    expect(result.title).toBe("Add OAuth login flow");
+  });
+
+  test("title truncates at 72 chars with ellipsis", () => {
+    const long = "a".repeat(100);
+    const result = formatPrContent([mkUser(1, long), mkOrch(1, {})], baseOpts);
+    expect(result.title).toHaveLength(72);
+    expect(result.title.endsWith("...")).toBe(true);
+  });
+
+  test("title falls back to placeholder when no user message", () => {
+    const result = formatPrContent([], baseOpts);
+    expect(result.title).toBe("gitgang interactive session");
+  });
+
+  test("body always includes Summary section with last bestAnswer", () => {
+    const result = formatPrContent(
+      [
+        mkUser(1, "do thing"),
+        mkOrch(1, { bestAnswer: "first answer" }),
+        mkUser(2, "now this"),
+        mkOrch(2, { bestAnswer: "final synthesis" }),
+      ],
+      baseOpts,
+    );
+    expect(result.body).toContain("## Summary");
+    expect(result.body).toContain("final synthesis");
+    expect(result.body).not.toContain("first answer");
+  });
+
+  test("body shows merge plan when intent was code", () => {
+    const result = formatPrContent(
+      [
+        mkUser(1, "add feature"),
+        mkOrch(1, {
+          bestAnswer: "done",
+          mergePlan: {
+            pick: "claude",
+            branches: ["agents/claude/turn-1"],
+            rationale: "cleanest diff",
+            followups: ["add tests"],
+          },
+        }),
+      ],
+      baseOpts,
+    );
+    expect(result.body).toContain("## Merge plan");
+    expect(result.body).toContain("`claude`");
+    expect(result.body).toContain("agents/claude/turn-1");
+    expect(result.body).toContain("cleanest diff");
+    expect(result.body).toContain("- add tests");
+  });
+
+  test("body shows disagreement with verdict and evidence", () => {
+    const result = formatPrContent(
+      [
+        mkUser(1, "fix bug"),
+        mkOrch(1, {
+          bestAnswer: "fixed",
+          disagreement: [
+            {
+              topic: "validation strategy",
+              positions: { gemini: "throw early", claude: "return null" },
+              verdict: "code throws everywhere",
+              evidence: ["src/auth.ts:42"],
+            },
+          ],
+        }),
+      ],
+      baseOpts,
+    );
+    expect(result.body).toContain("## Where the agents disagreed");
+    expect(result.body).toContain("### validation strategy");
+    expect(result.body).toContain("**gemini**: throw early");
+    expect(result.body).toContain("**claude**: return null");
+    expect(result.body).toContain("**Verdict:** code throws everywhere");
+    expect(result.body).toContain("`src/auth.ts:42`");
+  });
+
+  test("body omits Disagreement section when empty", () => {
+    const result = formatPrContent(
+      [mkUser(1, "x"), mkOrch(1, { bestAnswer: "y" })],
+      baseOpts,
+    );
+    expect(result.body).not.toContain("## Where the agents disagreed");
+  });
+
+  test("body shows Conversation section only when 2+ user messages", () => {
+    const single = formatPrContent(
+      [mkUser(1, "one"), mkOrch(1, {})],
+      baseOpts,
+    );
+    expect(single.body).not.toContain("## Conversation");
+
+    const multi = formatPrContent(
+      [
+        mkUser(1, "one"),
+        mkOrch(1, {}),
+        mkUser(2, "two"),
+        mkOrch(2, {}),
+      ],
+      baseOpts,
+    );
+    expect(multi.body).toContain("## Conversation");
+    expect(multi.body).toContain("Turn 1: one");
+    expect(multi.body).toContain("Turn 2: two");
+  });
+
+  test("Conversation section shows only the most recent 5 user messages", () => {
+    const events: SessionEvent[] = [];
+    for (let i = 1; i <= 8; i++) {
+      events.push(mkUser(i, `message ${i}`));
+      events.push(mkOrch(i, { bestAnswer: "ok" }));
+    }
+    const result = formatPrContent(events, baseOpts);
+    expect(result.body).not.toContain("Turn 1: message 1");
+    expect(result.body).not.toContain("Turn 2: message 2");
+    expect(result.body).toContain("Turn 4: message 4");
+    expect(result.body).toContain("Turn 8: message 8");
+  });
+
+  test("Conversation section truncates long user messages to 200 chars", () => {
+    const long = "x".repeat(500);
+    const result = formatPrContent(
+      [mkUser(1, "first"), mkOrch(1, {}), mkUser(2, long), mkOrch(2, {})],
+      baseOpts,
+    );
+    const turn2Line = result.body.split("\n").find((l) => l.startsWith("- Turn 2:"));
+    expect(turn2Line).toBeDefined();
+    if (turn2Line) {
+      expect(turn2Line.length).toBeLessThan(220);
+      expect(turn2Line.endsWith("...")).toBe(true);
+    }
+  });
+
+  test("body always ends with gitgang signature", () => {
+    const result = formatPrContent([mkUser(1, "x"), mkOrch(1, {})], baseOpts);
+    expect(result.body).toContain("Generated by [gitgang]");
+    expect(result.body).toContain("v1.7.1");
+    expect(result.body).toContain("`s1`");
+    expect(result.body).toContain("`agents/claude/turn-3`");
+  });
+
+  test("works on session with no orchestrator events", () => {
+    const result = formatPrContent([mkUser(1, "x")], baseOpts);
+    expect(result.body).toContain("(no synthesis available)");
+    expect(result.body).not.toContain("## Merge plan");
+  });
+});
