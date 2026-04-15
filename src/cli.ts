@@ -2608,6 +2608,7 @@ async function runInteractive(parsed: ParsedArgs): Promise<number> {
     yolo: parsed.yolo ?? true,
     timeoutMs: parsed.timeoutMs ?? 10 * 60 * 1000,
     repoRoot: repo,
+    logsDir: join(session.dir, "logs"),
   });
   const spawnOrchestrator = createRealOrchestrator({
     model: models.claude,
