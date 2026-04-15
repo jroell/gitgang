@@ -860,9 +860,43 @@ describe("exports for interactive mode", () => {
 });
 
 describe("interactive mode flag parsing", () => {
-  test("bare gg implies interactive", () => {
+  test("bare gg defaults to pair mode with claude coder + codex reviewer", () => {
     const p = parseArgs([]);
-    expect(p.interactive).toBe(true);
+    expect(p.subcommand?.kind).toBe("pair");
+    if (p.subcommand?.kind === "pair") {
+      expect(p.subcommand.coder).toBe("claude");
+      expect(p.subcommand.reviewer).toBe("codex");
+      expect(p.subcommand.task).toBeUndefined();
+    }
+  });
+
+  test("gg pair with no flags uses the same defaults", () => {
+    const p = parseArgs(["pair"]);
+    expect(p.subcommand?.kind).toBe("pair");
+    if (p.subcommand?.kind === "pair") {
+      expect(p.subcommand.coder).toBe("claude");
+      expect(p.subcommand.reviewer).toBe("codex");
+      expect(p.subcommand.task).toBeUndefined();
+    }
+  });
+
+  test("gg pair with task but no coder/reviewer still defaults", () => {
+    const p = parseArgs(["pair", "ship the feature"]);
+    expect(p.subcommand?.kind).toBe("pair");
+    if (p.subcommand?.kind === "pair") {
+      expect(p.subcommand.coder).toBe("claude");
+      expect(p.subcommand.reviewer).toBe("codex");
+      expect(p.subcommand.task).toBe("ship the feature");
+    }
+  });
+
+  test("gg pair --coder codex --reviewer claude overrides defaults", () => {
+    const p = parseArgs(["pair", "--coder", "codex", "--reviewer", "claude", "task"]);
+    expect(p.subcommand?.kind).toBe("pair");
+    if (p.subcommand?.kind === "pair") {
+      expect(p.subcommand.coder).toBe("codex");
+      expect(p.subcommand.reviewer).toBe("claude");
+    }
   });
 
   test("-i flag enables interactive", () => {

@@ -1,5 +1,20 @@
 # GitGang Changelog
 
+## Unreleased
+
+**Pair mode is now the default when you run `gg` with no arguments.**
+
+- `gg` (bare) prompts for a task and then enters pair mode with `claude` as coder and `codex` as reviewer.
+- `gg pair` (no flags) uses the same defaults — `--coder` and `--reviewer` are now optional everywhere; previously both were required.
+- Empty prompt / Ctrl+C / Ctrl+D cancels cleanly with exit 0 — no session directory or worktree is created.
+- Outside a git repository, bare `gg` falls back to the v1.8.1 read-only interactive Q&A mode instead of crashing (pair mode needs worktrees, which need a git repo).
+- `gg -i` still starts the interactive REPL; `gg "task"` still runs the one-shot multi-agent flow. Scripts that passed a task positionally or used `-i` keep working unchanged.
+- Help text updated: the new Usage block shows pair-as-default, with an explicit "Pair Mode" section listing override flags (`--coder`, `--reviewer`, `--no-yolo`, `--timeout`).
+
+**Note for returning users**: if you typed bare `gg` expecting the interactive REPL (the v1.7.0–v1.9.x default), use `gg -i` from now on.
+
+**Tests**: 555 passing (+4 new assertions covering the new defaults and relaxed pair parsing).
+
 ## v1.8.1 — 2026-04-15
 
 Non-git Q&A mode — gitgang now works like Claude Code: you can run `gg -i` from any directory, not just git repos.

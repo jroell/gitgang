@@ -949,6 +949,24 @@ function parseDuration(value: string): number | undefined {
 }
 
 function parseArgs(raw: string[]) {
+  // Bare `gg` (no args) → default to pair mode. The common invocation lands
+  // users in AI pair programming; dispatchMain prompts for the task and
+  // falls back to interactive Q&A when outside a git repo. Explicit flows
+  // (`gg "task"`, `gg -i`, `gg pair ...`) still work unchanged.
+  if (raw.length === 0) {
+    return {
+      subcommand: {
+        kind: "pair",
+        coder: "claude",
+        reviewer: "codex",
+        task: undefined,
+        yolo: true,
+        timeoutMs: 30 * 60 * 1000,
+        reviewIntervalMs: 45_000,
+        maxInterventions: 5,
+      },
+    } as unknown as ParsedArgs;
+  }
   // Doctor subcommand — a simple zero-arg environment health check.
   if (raw[0] === "doctor") {
     const json = raw.includes("--json");
@@ -1018,9 +1036,11 @@ function parseArgs(raw: string[]) {
       }
     }
 
-    if (!coder) throw new Error("--coder is required (claude or codex)");
-    if (!reviewer) throw new Error("--reviewer is required (claude or codex)");
-    if (!task) throw new Error("A task is required. Usage: gg pair --coder claude --reviewer codex \"your task\"");
+    // Pair mode defaults to claude (coder) + codex (reviewer). Task may be
+    // omitted here — dispatchMain prompts the user when it's missing, which
+    // supports both bare `gg` and `gg pair` invocations.
+    if (!coder) coder = "claude";
+    if (!reviewer) reviewer = "codex";
 
     return {
       subcommand: {
@@ -1316,7 +1336,7 @@ interface ParsedArgs {
         kind: "pair";
         coder: string;
         reviewer: string;
-        task: string;
+        task?: string;
         yolo: boolean;
         timeoutMs: number;
         reviewIntervalMs: number;
@@ -2467,14 +2487,23 @@ function printHelp() {
     `\n${C.b(`🤘 GitGang (${VERSION})`)}\n${C.gray("The gang's all here to code!")}\n${line()}
 
 Usage
-  gg "Do this task"
-  gitgang "Do this task"
+  gg                                Pair mode (default) — prompts for a task
+  gg pair "Do this task"            Pair mode with inline task
+  gg "Do this task"                 One-shot multi-agent (gemini + claude + codex)
+  gg -i                             Interactive REPL
   gitgang --task "Do this task" [--rounds N] [--no-yolo] [--workRoot PATH] [--timeout 25m] [--no-pr] [--dry-run] [--agents gemini,claude,codex] [--reviewer codex] [--check "npm test"]
   gitgang --solo claude "Do this task"
 
-Interactive Mode (new in v1.7.0)
-  gg                                Start interactive REPL (no task)
-  gg -i                             Same as above
+Pair Mode (default when run with no arguments)
+  gg                                Prompt for task; use defaults (coder=claude, reviewer=codex)
+  gg pair "task"                    Same defaults, inline task
+  gg pair --coder codex --reviewer claude "task"   Swap roles
+  gg pair --no-yolo "task"          Require explicit permission grants
+  gg pair --timeout 45m "task"      Custom overall timeout
+  Note: outside a git repo, bare 'gg' falls back to the interactive REPL (read-only Q&A).
+
+Interactive Mode
+  gg -i                             Start interactive REPL (no task)
   gg -i "opener"                    Pre-load first turn
   gg -i --automerge on|off|ask      Session-default merge behavior (default: ask)
   gg -i --resume                    Resume most-recent session
@@ -2775,6 +2804,38 @@ async function existingOneShotMain(parsed: ParsedArgs): Promise<number> {
   return finalStatus === "approved" ? 0 : 1;
 }
 
+async function promptForPairTask(coder: string, reviewer: string): Promise<string | undefined> {
+  process.stdout.write(
+    `\n🤘 ${chalk.bold("GitGang Pair Mode")}  ` +
+      `${chalk.cyan(coder)} ${chalk.gray("(coder)")} · ` +
+      `${chalk.magenta(reviewer)} ${chalk.gray("(reviewer)")}\n` +
+      chalk.gray(
+        "  What should the gang work on? Enter a task, or press Enter on an empty line to cancel.\n" +
+          "  Tip: `gg -i` starts the interactive REPL, `gg --help` lists all options.\n",
+      ),
+  );
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = await new Promise<string>((resolve) => {
+      let done = false;
+      const finish = (val: string) => {
+        if (done) return;
+        done = true;
+        resolve(val);
+      };
+      // SIGINT: readline consumes Ctrl+C while the prompt is active.
+      rl.once("SIGINT", () => finish(""));
+      // close: Ctrl+D (EOF), stdin closed by pipe, etc.
+      rl.once("close", () => finish(""));
+      rl.question(chalk.bold("› "), (input) => finish(input));
+    });
+    const trimmed = answer.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  } finally {
+    rl.close();
+  }
+}
+
 export async function dispatchMain(parsed: ParsedArgs): Promise<number> {
   if (parsed.subcommand?.kind === "sessions_list") {
     return runSessionsList(parsed.subcommand.json ?? false);
@@ -2827,14 +2888,35 @@ export async function dispatchMain(parsed: ParsedArgs): Promise<number> {
     return 0;
   }
   if (parsed.subcommand?.kind === "pair") {
+    // Pair mode creates per-session worktrees for the reviewer, so it needs
+    // a git repo. When bare `gg` lands us here from a non-git directory,
+    // degrade into the read-only interactive Q&A flow instead of crashing.
+    const gitRoot = await findRepoRoot();
+    if (!gitRoot) {
+      return runInteractive({
+        ...parsed,
+        interactive: true,
+        subcommand: undefined,
+      } as ParsedArgs);
+    }
+
+    // Task may be undefined when the user ran bare `gg` (or `gg pair` with
+    // no positional task). Prompt now, before any session dir is created,
+    // so a cancelled prompt leaves zero side effects on disk.
+    let task = parsed.subcommand.task;
+    if (!task || !task.trim()) {
+      const entered = await promptForPairTask(parsed.subcommand.coder, parsed.subcommand.reviewer);
+      if (!entered) return 0;
+      task = entered;
+    }
+
     const { runPairMode } = await import("./pair.js");
-    const repo = await repoRoot();
-    const base = await currentBranch(repo);
+    const base = await currentBranch(gitRoot);
     return runPairMode({
       coder: parsed.subcommand.coder as "claude" | "codex",
       reviewer: parsed.subcommand.reviewer as "claude" | "codex",
-      task: parsed.subcommand.task,
-      repoRoot: repo,
+      task,
+      repoRoot: gitRoot,
       baseBranch: base,
       yolo: parsed.subcommand.yolo,
       timeoutMs: parsed.subcommand.timeoutMs,
