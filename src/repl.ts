@@ -468,6 +468,14 @@ export type RealFanOutConfig = {
    * Worktree contents are deleted after the turn, but log files survive.
    */
   logsDir?: string;
+  /**
+   * When true, skip worktree creation entirely. Each agent runs with its cwd
+   * set to `repoRoot` (the user's original directory). Used by non-git
+   * interactive sessions — agents see the user's files but are instructed
+   * via prompt to treat them as read-only. No diff collection is performed
+   * (there's no base branch to diff against).
+   */
+  noGit?: boolean;
 };
 
 /**
@@ -524,9 +532,13 @@ export function formatAgentLog(params: {
 
 export function createRealFanOut(cfg: RealFanOutConfig): ExecuteTurnDeps["fanOut"] {
   return async ({ turn, userMessage, history, worktreesDir, base, agentIds, onAgentProgress }) => {
-    mkdirSync(worktreesDir, { recursive: true });
-    const rootFolder = join(worktreesDir, `turn-${turn}`);
-    mkdirSync(rootFolder, { recursive: true });
+    // In no-git mode, skip worktree setup entirely — agents run in the user's
+    // cwd with a read-only prompt constraint. Still need logsDir plumbing.
+    if (!cfg.noGit) {
+      mkdirSync(worktreesDir, { recursive: true });
+    }
+    const rootFolder = cfg.noGit ? cfg.repoRoot : join(worktreesDir, `turn-${turn}`);
+    if (!cfg.noGit) mkdirSync(rootFolder, { recursive: true });
 
     const emit = (event: AgentProgressEvent) => {
       try {
@@ -542,21 +554,42 @@ export function createRealFanOut(cfg: RealFanOutConfig): ExecuteTurnDeps["fanOut
 
     const results: AgentResult[] = await Promise.all(
       turnAgents.map(async (agent): Promise<AgentResult> => {
-        let branch = `agents/${agent}/turn-${turn}`;
+        let branch = cfg.noGit ? "no-git" : `agents/${agent}/turn-${turn}`;
         emit({ agent: agent as AgentIdLocal, phase: "start" });
         try {
-          const wt = await createWorktree(cfg.repoRoot, base, agent, rootFolder);
-          branch = wt.branch;
+          // Git mode: create a per-agent worktree. No-git mode: use user's cwd.
+          let agentCwd: string;
+          if (cfg.noGit) {
+            agentCwd = cfg.repoRoot;
+          } else {
+            const wt = await createWorktree(cfg.repoRoot, base, agent, rootFolder);
+            agentCwd = wt.dir;
+            branch = wt.branch;
+          }
 
-          const prompt = buildTurnPrompt({ agent, base, userMessage, history });
-          const promptFile = join(wt.dir, ".gitgang-prompt.txt");
+          const prompt = buildTurnPrompt({
+            agent,
+            base,
+            userMessage,
+            history,
+            readOnly: cfg.noGit === true,
+          });
+          // In no-git mode, don't pollute the user's cwd — write prompt to
+          // a temp file in the system temp dir instead.
+          const promptFile = cfg.noGit
+            ? join(
+                cfg.logsDir ?? rootFolder,
+                `.gitgang-prompt-${turn}-${agent}.txt`,
+              )
+            : join(agentCwd, ".gitgang-prompt.txt");
+          if (cfg.logsDir) mkdirSync(cfg.logsDir, { recursive: true });
           writeFileSync(promptFile, prompt);
 
           const [command, ...args] = agentCommandFor(agent, cfg.models[agent], cfg.yolo);
           const bashCmd = `cat ${JSON.stringify(promptFile)} | ${command} ${args
             .map((a) => JSON.stringify(a))
             .join(" ")}`;
-          const proc = spawnProcess(["bash", "-c", bashCmd], { cwd: wt.dir });
+          const proc = spawnProcess(["bash", "-c", bashCmd], { cwd: agentCwd });
           registerActiveChild(proc);
 
           const startedAt = new Date().toISOString();
@@ -578,7 +611,9 @@ export function createRealFanOut(cfg: RealFanOutConfig): ExecuteTurnDeps["fanOut
           clearTimeout(timer);
           const finishedAt = new Date().toISOString();
 
-          const diffSummary = await gitDiffStat(wt.dir, base);
+          // Only collect diffs in git mode — there's no base branch to diff against
+          // outside a repo, and agents are instructed not to modify files anyway.
+          const diffSummary = cfg.noGit ? "" : await gitDiffStat(agentCwd, base);
           const diffPaths = diffSummary
             ? diffSummary
                 .split("\n")
