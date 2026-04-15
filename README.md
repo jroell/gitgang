@@ -106,6 +106,8 @@ For questions, the turn ends with the synthesis. For code changes, the orchestra
     gg sessions list --json               # JSON list of sessions (pipe to jq)
     gg sessions stats <id> --json         # JSON stats object
     gg completions bash|zsh|fish          # emit shell completion script (eval in your rc file)
+    gg init                               # scaffold .gitgang/config.json with per-repo defaults
+    gg init --force                       # overwrite an existing config.json
     gg sessions list                      # list recent sessions (with topic)
     gg sessions search <query>            # find sessions matching text (topic/answer)
     gg sessions stats <id>                # show turn/agent/merge counts + duration for a session
