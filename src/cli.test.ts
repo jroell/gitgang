@@ -22,6 +22,9 @@ import {
   resolveModels,
   applyModelOverrides,
   isAgentId,
+  createWorktree,
+  applyMergePlan,
+  spawnProcess,
 } from "./cli";
 
 function createTempDir(): string {
@@ -777,14 +780,6 @@ describe("Per-agent model override flags (--model-*)", () => {
     expect(parsed.task).toBe("Build it");
   });
 });
-
-import {
-  createWorktree,
-  applyMergePlan,
-  systemConstraints,
-  featurePrompt,
-  spawnProcess,
-} from "./cli";
 
 describe("exports for interactive mode", () => {
   test("createWorktree is exported", () => {
