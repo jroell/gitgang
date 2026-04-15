@@ -71,6 +71,15 @@ export async function runRepl(deps: ReplDeps): Promise<void> {
   }
 }
 
+export type AgentPhase = "pending" | "running" | "done" | "failed" | "timeout";
+
+export type AgentProgressEvent =
+  | { agent: AgentIdLocal; phase: "start" }
+  | { agent: AgentIdLocal; phase: "done" | "failed" | "timeout"; diffSummary?: string };
+
+// Local alias to avoid circular import; matches ./cli export.
+type AgentIdLocal = "gemini" | "claude" | "codex";
+
 export type ExecuteTurnDeps = {
   session: LoadedSession;
   repoRoot: string;
@@ -83,13 +92,88 @@ export type ExecuteTurnDeps = {
     history: Array<{ turn: number; user: string; assistant: string }>;
     worktreesDir: string;
     base: string;
+    onAgentProgress?: (event: AgentProgressEvent) => void;
   }) => Promise<AgentResult[]>;
   spawnOrchestrator: (
     input: ReturnType<typeof buildOrchestratorInput>,
   ) => Promise<OrchestratorOutput>;
   applyMerge: (plan: MergePlan) => Promise<{ success: boolean; error?: string }>;
   cleanupWorktrees: (turn: number) => Promise<void>;
+  heartbeatIntervalMs?: number;
 };
+
+export const DEFAULT_HEARTBEAT_INTERVAL_MS = Number(
+  process.env.GITGANG_HEARTBEAT_MS ?? 30_000,
+);
+
+function formatElapsed(ms: number): string {
+  const totalSec = Math.floor(ms / 1000);
+  const mm = Math.floor(totalSec / 60);
+  const ss = totalSec % 60;
+  return `${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
+}
+
+/**
+ * Render a single heartbeat line summarizing which agents are still running.
+ * Pure function — tested in isolation.
+ *
+ * Example: "[01:30] 2 agents running: gemini, claude (codex done)"
+ */
+export function formatHeartbeat(
+  elapsedMs: number,
+  states: ReadonlyMap<string, AgentPhase>,
+  agentOrder: readonly string[],
+): string {
+  const running: string[] = [];
+  const done: string[] = [];
+  const failed: string[] = [];
+  for (const id of agentOrder) {
+    const phase = states.get(id) ?? "pending";
+    if (phase === "running" || phase === "pending") running.push(id);
+    else if (phase === "done") done.push(id);
+    else failed.push(`${id} ${phase}`);
+  }
+  const prefix = `[${formatElapsed(elapsedMs)}]`;
+  if (running.length === 0 && failed.length === 0) {
+    return `${prefix} all agents done`;
+  }
+  const parts: string[] = [];
+  if (running.length > 0) {
+    parts.push(
+      `${running.length} agent${running.length === 1 ? "" : "s"} running: ${running.join(", ")}`,
+    );
+  }
+  const finished: string[] = [];
+  if (done.length > 0) finished.push(`${done.join(", ")} done`);
+  if (failed.length > 0) finished.push(failed.join(", "));
+  if (finished.length > 0) parts.push(`(${finished.join("; ")})`);
+  return `${prefix} ${parts.join(" ")}`;
+}
+
+/**
+ * Render an immediate per-agent transition line. Pure function.
+ *
+ * Examples:
+ *   "[00:03] ▸ gemini started"
+ *   "[00:45] ✓ codex done"
+ *   "[01:10] ✗ claude failed"
+ *   "[02:00] ⏱ gemini timeout"
+ */
+export function formatAgentTransition(
+  elapsedMs: number,
+  event: AgentProgressEvent,
+): string {
+  const t = formatElapsed(elapsedMs);
+  if (event.phase === "start") return `[${t}] ▸ ${event.agent} started`;
+  if (event.phase === "done") {
+    const diff = event.diffSummary && event.diffSummary.trim().length > 0
+      ? ` (${event.diffSummary.split("\n")[0].trim()})`
+      : "";
+    return `[${t}] ✓ ${event.agent} done${diff}`;
+  }
+  if (event.phase === "failed") return `[${t}] ✗ ${event.agent} failed`;
+  return `[${t}] ⏱ ${event.agent} timeout`;
+}
 
 export async function executeTurn(
   userMessage: string,
@@ -108,13 +192,40 @@ export async function executeTurn(
     forcedMode,
   });
 
-  const agents = await deps.fanOut({
-    turn,
-    userMessage,
-    history,
-    worktreesDir: deps.session.worktreesDir,
-    base: deps.base,
-  });
+  const agentStates = new Map<AgentIdLocal, AgentPhase>();
+  const agentOrder: AgentIdLocal[] = ["gemini", "claude", "codex"];
+  for (const id of agentOrder) agentStates.set(id, "pending");
+
+  const turnStart = Date.now();
+  const heartbeatMs = deps.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
+  let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  if (heartbeatMs > 0) {
+    heartbeatTimer = setInterval(() => {
+      deps.output.write(
+        formatHeartbeat(Date.now() - turnStart, agentStates, agentOrder) + "\n",
+      );
+    }, heartbeatMs);
+  }
+
+  let agents: AgentResult[];
+  try {
+    agents = await deps.fanOut({
+      turn,
+      userMessage,
+      history,
+      worktreesDir: deps.session.worktreesDir,
+      base: deps.base,
+      onAgentProgress: (event) => {
+        if (event.phase === "start") agentStates.set(event.agent, "running");
+        else agentStates.set(event.agent, event.phase);
+        deps.output.write(
+          formatAgentTransition(Date.now() - turnStart, event) + "\n",
+        );
+      },
+    });
+  } finally {
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+  }
 
   for (const a of agents) {
     appendEvent(deps.session.logPath, {
@@ -309,14 +420,23 @@ export type RealFanOutConfig = {
 };
 
 export function createRealFanOut(cfg: RealFanOutConfig): ExecuteTurnDeps["fanOut"] {
-  return async ({ turn, userMessage, history, worktreesDir, base }) => {
+  return async ({ turn, userMessage, history, worktreesDir, base, onAgentProgress }) => {
     mkdirSync(worktreesDir, { recursive: true });
     const rootFolder = join(worktreesDir, `turn-${turn}`);
     mkdirSync(rootFolder, { recursive: true });
 
+    const emit = (event: AgentProgressEvent) => {
+      try {
+        onAgentProgress?.(event);
+      } catch {
+        // progress callbacks are best-effort; never break the turn
+      }
+    };
+
     const results: AgentResult[] = await Promise.all(
       cfg.agentIds.map(async (agent): Promise<AgentResult> => {
         let branch = `agents/${agent}/turn-${turn}`;
+        emit({ agent: agent as AgentIdLocal, phase: "start" });
         try {
           const wt = await createWorktree(cfg.repoRoot, base, agent, rootFolder);
           branch = wt.branch;
@@ -364,6 +484,12 @@ export function createRealFanOut(cfg: RealFanOutConfig): ExecuteTurnDeps["fanOut
               ? "ok"
               : "failed";
 
+          emit({
+            agent: agent as AgentIdLocal,
+            phase: status === "ok" ? "done" : status,
+            diffSummary,
+          });
+
           return {
             id: agent,
             model: cfg.models[agent],
@@ -374,6 +500,7 @@ export function createRealFanOut(cfg: RealFanOutConfig): ExecuteTurnDeps["fanOut
             diffPaths,
           };
         } catch (err) {
+          emit({ agent: agent as AgentIdLocal, phase: "failed" });
           return {
             id: agent,
             model: cfg.models[agent],

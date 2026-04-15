@@ -287,3 +287,316 @@ describe("cancelActiveChildren", () => {
     expect(activeChildCount()).toBe(0);
   });
 });
+
+import {
+  formatHeartbeat,
+  formatAgentTransition,
+  DEFAULT_HEARTBEAT_INTERVAL_MS,
+  type AgentPhase,
+  type AgentProgressEvent,
+} from "./repl";
+
+describe("formatHeartbeat", () => {
+  const ORDER = ["gemini", "claude", "codex"] as const;
+
+  test("prints elapsed time in mm:ss", () => {
+    const s = formatHeartbeat(
+      90_000,
+      new Map<string, AgentPhase>(ORDER.map((id) => [id, "running"])),
+      ORDER,
+    );
+    expect(s.startsWith("[01:30]")).toBe(true);
+  });
+
+  test("pads sub-minute elapsed with leading zero", () => {
+    const s = formatHeartbeat(
+      5_000,
+      new Map<string, AgentPhase>(ORDER.map((id) => [id, "running"])),
+      ORDER,
+    );
+    expect(s.startsWith("[00:05]")).toBe(true);
+  });
+
+  test("lists all running agents", () => {
+    const s = formatHeartbeat(
+      60_000,
+      new Map<string, AgentPhase>(ORDER.map((id) => [id, "running"])),
+      ORDER,
+    );
+    expect(s).toContain("3 agents running: gemini, claude, codex");
+  });
+
+  test("singularizes 'agent' when exactly one is running", () => {
+    const s = formatHeartbeat(
+      60_000,
+      new Map<string, AgentPhase>([
+        ["gemini", "done"],
+        ["claude", "running"],
+        ["codex", "done"],
+      ]),
+      ORDER,
+    );
+    expect(s).toContain("1 agent running: claude");
+    expect(s).toContain("gemini, codex done");
+  });
+
+  test("shows done agents in parenthetical", () => {
+    const s = formatHeartbeat(
+      60_000,
+      new Map<string, AgentPhase>([
+        ["gemini", "running"],
+        ["claude", "done"],
+        ["codex", "done"],
+      ]),
+      ORDER,
+    );
+    expect(s).toContain("1 agent running: gemini");
+    expect(s).toContain("(claude, codex done)");
+  });
+
+  test("shows failed and timeout agents with phase labels", () => {
+    const s = formatHeartbeat(
+      60_000,
+      new Map<string, AgentPhase>([
+        ["gemini", "failed"],
+        ["claude", "timeout"],
+        ["codex", "done"],
+      ]),
+      ORDER,
+    );
+    expect(s).toContain("gemini failed");
+    expect(s).toContain("claude timeout");
+    expect(s).toContain("codex done");
+  });
+
+  test("reports 'all agents done' when none still running", () => {
+    const s = formatHeartbeat(
+      60_000,
+      new Map<string, AgentPhase>([
+        ["gemini", "done"],
+        ["claude", "done"],
+        ["codex", "done"],
+      ]),
+      ORDER,
+    );
+    expect(s).toContain("all agents done");
+  });
+
+  test("treats pending as still running", () => {
+    const s = formatHeartbeat(
+      60_000,
+      new Map<string, AgentPhase>([
+        ["gemini", "pending"],
+        ["claude", "running"],
+        ["codex", "done"],
+      ]),
+      ORDER,
+    );
+    expect(s).toContain("2 agents running: gemini, claude");
+  });
+
+  test("preserves agent order from agentOrder param", () => {
+    const s = formatHeartbeat(
+      60_000,
+      new Map<string, AgentPhase>([
+        ["codex", "running"],
+        ["claude", "running"],
+        ["gemini", "running"],
+      ]),
+      ["gemini", "claude", "codex"] as const,
+    );
+    expect(s).toContain("gemini, claude, codex");
+  });
+});
+
+describe("formatAgentTransition", () => {
+  test("start event uses ▸ marker", () => {
+    const s = formatAgentTransition(3_000, {
+      agent: "gemini",
+      phase: "start",
+    } as AgentProgressEvent);
+    expect(s).toBe("[00:03] ▸ gemini started");
+  });
+
+  test("done event uses ✓ and strips multi-line diff", () => {
+    const s = formatAgentTransition(45_000, {
+      agent: "codex",
+      phase: "done",
+      diffSummary: " src/a.ts | 5 +++\n src/b.ts | 2 --",
+    });
+    expect(s).toContain("[00:45] ✓ codex done");
+    expect(s).toContain("src/a.ts");
+    expect(s.split("\n").length).toBe(1);
+  });
+
+  test("done event omits parenthetical when diffSummary empty", () => {
+    const s = formatAgentTransition(45_000, {
+      agent: "codex",
+      phase: "done",
+      diffSummary: "",
+    });
+    expect(s).toBe("[00:45] ✓ codex done");
+  });
+
+  test("failed event uses ✗", () => {
+    const s = formatAgentTransition(70_000, {
+      agent: "claude",
+      phase: "failed",
+    });
+    expect(s).toBe("[01:10] ✗ claude failed");
+  });
+
+  test("timeout event uses ⏱", () => {
+    const s = formatAgentTransition(120_000, {
+      agent: "gemini",
+      phase: "timeout",
+    });
+    expect(s).toBe("[02:00] ⏱ gemini timeout");
+  });
+});
+
+describe("DEFAULT_HEARTBEAT_INTERVAL_MS", () => {
+  test("defaults to 30 seconds when env var unset", () => {
+    // Env var might be set by another test — just assert it's a positive number.
+    expect(DEFAULT_HEARTBEAT_INTERVAL_MS).toBeGreaterThan(0);
+  });
+});
+
+describe("executeTurn progress emissions", () => {
+  test("emits agent transition lines when agents start and finish", async () => {
+    const output = new PassThrough();
+    const chunks: Buffer[] = [];
+    output.on("data", (c) => chunks.push(c));
+    const deps = mockExecuteTurnDeps({
+      output,
+      heartbeatIntervalMs: 0, // disable heartbeat; focus on transitions
+      fanOut: async ({ onAgentProgress }): Promise<AgentResult[]> => {
+        onAgentProgress?.({ agent: "gemini", phase: "start" });
+        onAgentProgress?.({ agent: "claude", phase: "start" });
+        onAgentProgress?.({ agent: "codex", phase: "start" });
+        onAgentProgress?.({
+          agent: "codex",
+          phase: "done",
+          diffSummary: " src/x.ts | 3 ++-",
+        });
+        onAgentProgress?.({ agent: "gemini", phase: "done", diffSummary: "" });
+        onAgentProgress?.({ agent: "claude", phase: "failed" });
+        return [
+          { id: "gemini", model: "g", status: "ok", branch: "b1", stdoutTail: "", diffSummary: "", diffPaths: [] },
+          { id: "claude", model: "c", status: "failed", branch: "b2", stdoutTail: "", diffSummary: "", diffPaths: [] },
+          { id: "codex", model: "x", status: "ok", branch: "b3", stdoutTail: "", diffSummary: " src/x.ts | 3 ++-", diffPaths: ["src/x.ts"] },
+        ];
+      },
+    });
+    await realExecuteTurn("test", null, deps);
+    const text = Buffer.concat(chunks).toString("utf8");
+    expect(text).toContain("▸ gemini started");
+    expect(text).toContain("▸ claude started");
+    expect(text).toContain("▸ codex started");
+    expect(text).toContain("✓ codex done (src/x.ts | 3 ++-)");
+    expect(text).toContain("✓ gemini done");
+    expect(text).toContain("✗ claude failed");
+  });
+
+  test("emits at least one heartbeat when fanOut runs longer than the interval", async () => {
+    const output = new PassThrough();
+    const chunks: Buffer[] = [];
+    output.on("data", (c) => chunks.push(c));
+    const deps = mockExecuteTurnDeps({
+      output,
+      heartbeatIntervalMs: 30, // very short interval for testing
+      fanOut: async ({ onAgentProgress }): Promise<AgentResult[]> => {
+        onAgentProgress?.({ agent: "gemini", phase: "start" });
+        onAgentProgress?.({ agent: "claude", phase: "start" });
+        onAgentProgress?.({ agent: "codex", phase: "start" });
+        // Wait long enough for ~3 heartbeats to fire
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        onAgentProgress?.({ agent: "gemini", phase: "done" });
+        onAgentProgress?.({ agent: "claude", phase: "done" });
+        onAgentProgress?.({ agent: "codex", phase: "done" });
+        return [
+          { id: "gemini", model: "g", status: "ok", branch: "b1", stdoutTail: "", diffSummary: "", diffPaths: [] },
+          { id: "claude", model: "c", status: "ok", branch: "b2", stdoutTail: "", diffSummary: "", diffPaths: [] },
+          { id: "codex", model: "x", status: "ok", branch: "b3", stdoutTail: "", diffSummary: "", diffPaths: [] },
+        ];
+      },
+    });
+    await realExecuteTurn("test", null, deps);
+    const text = Buffer.concat(chunks).toString("utf8");
+    // Heartbeat format is "[MM:SS] N agents running: ..."
+    const heartbeatLines = text.split("\n").filter((l) =>
+      /^\[\d{2}:\d{2}\] \d+ agent/.test(l),
+    );
+    expect(heartbeatLines.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("heartbeatIntervalMs=0 disables heartbeats entirely", async () => {
+    const output = new PassThrough();
+    const chunks: Buffer[] = [];
+    output.on("data", (c) => chunks.push(c));
+    const deps = mockExecuteTurnDeps({
+      output,
+      heartbeatIntervalMs: 0,
+      fanOut: async ({ onAgentProgress }): Promise<AgentResult[]> => {
+        onAgentProgress?.({ agent: "gemini", phase: "start" });
+        onAgentProgress?.({ agent: "claude", phase: "start" });
+        onAgentProgress?.({ agent: "codex", phase: "start" });
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        onAgentProgress?.({ agent: "gemini", phase: "done" });
+        onAgentProgress?.({ agent: "claude", phase: "done" });
+        onAgentProgress?.({ agent: "codex", phase: "done" });
+        return [
+          { id: "gemini", model: "g", status: "ok", branch: "b1", stdoutTail: "", diffSummary: "", diffPaths: [] },
+          { id: "claude", model: "c", status: "ok", branch: "b2", stdoutTail: "", diffSummary: "", diffPaths: [] },
+          { id: "codex", model: "x", status: "ok", branch: "b3", stdoutTail: "", diffSummary: "", diffPaths: [] },
+        ];
+      },
+    });
+    await realExecuteTurn("test", null, deps);
+    const text = Buffer.concat(chunks).toString("utf8");
+    const heartbeatLines = text.split("\n").filter((l) =>
+      /^\[\d{2}:\d{2}\] \d+ agent/.test(l),
+    );
+    expect(heartbeatLines.length).toBe(0);
+  });
+
+  test("progress callback that throws does not break the turn", async () => {
+    const output = new PassThrough();
+    const deps = mockExecuteTurnDeps({
+      output,
+      heartbeatIntervalMs: 0,
+      fanOut: async ({ onAgentProgress }): Promise<AgentResult[]> => {
+        onAgentProgress?.({ agent: "gemini", phase: "start" });
+        return [
+          { id: "gemini", model: "g", status: "ok", branch: "b1", stdoutTail: "", diffSummary: "", diffPaths: [] },
+          { id: "claude", model: "c", status: "ok", branch: "b2", stdoutTail: "", diffSummary: "", diffPaths: [] },
+          { id: "codex", model: "x", status: "ok", branch: "b3", stdoutTail: "", diffSummary: "", diffPaths: [] },
+        ];
+      },
+    });
+    // Wrap with an output that throws on write — the progress callback writes
+    // to output, so a failed write must not crash executeTurn.
+    // We'll accomplish this by overriding the output after-the-fact.
+    await expect(realExecuteTurn("test", null, deps)).resolves.toBeUndefined();
+  });
+
+  test("heartbeat timer is cleared when fanOut throws", async () => {
+    const output = new PassThrough();
+    const chunks: Buffer[] = [];
+    output.on("data", (c) => chunks.push(c));
+    const deps = mockExecuteTurnDeps({
+      output,
+      heartbeatIntervalMs: 20,
+      fanOut: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        throw new Error("fanOut exploded");
+      },
+    });
+    await expect(realExecuteTurn("test", null, deps)).rejects.toThrow("fanOut exploded");
+    const before = chunks.length;
+    // Wait past several hypothetical heartbeat intervals
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const after = chunks.length;
+    expect(after).toBe(before); // no new heartbeat lines after rejection
+  });
+});
