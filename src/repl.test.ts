@@ -1,6 +1,42 @@
 import { describe, test, expect } from "vitest";
 import { PassThrough } from "node:stream";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { runRepl, type ReplDeps } from "./repl";
+import type { AgentResult, OrchestratorOutput } from "./orchestrator";
+import { executeTurn as realExecuteTurn, type ExecuteTurnDeps } from "./repl";
+
+function mockExecuteTurnDeps(overrides: Partial<ExecuteTurnDeps> = {}): ExecuteTurnDeps {
+  const dir = mkdtempSync(join(tmpdir(), "gg-exec-"));
+  const logPath = join(dir, "session.jsonl");
+  writeFileSync(logPath, "");
+  const output = new PassThrough();
+  return {
+    session: {
+      id: "s",
+      dir,
+      logPath,
+      debugDir: join(dir, "debug"),
+      worktreesDir: join(dir, "worktrees"),
+      metadata: { id: "s", startedAt: "", models: { gemini: "g", claude: "c", codex: "x" }, reviewer: "codex", automerge: "ask" },
+      events: [],
+    },
+    repoRoot: "/repo",
+    base: "main",
+    output,
+    mergeInput: new PassThrough(),
+    fanOut: async (): Promise<AgentResult[]> => [
+      { id: "gemini", model: "g", status: "ok", branch: "agents/gemini/turn-1", stdoutTail: "", diffSummary: "", diffPaths: [] },
+      { id: "claude", model: "c", status: "ok", branch: "agents/claude/turn-1", stdoutTail: "", diffSummary: "", diffPaths: [] },
+      { id: "codex", model: "x", status: "ok", branch: "agents/codex/turn-1", stdoutTail: "", diffSummary: "", diffPaths: [] },
+    ],
+    spawnOrchestrator: async (): Promise<OrchestratorOutput> => ({ intent: "ask", agreement: ["mocked agreement"], disagreement: [], bestAnswer: "mocked answer" }),
+    applyMerge: async () => ({ success: true }),
+    cleanupWorktrees: async () => {},
+    ...overrides,
+  };
+}
 
 function makeDeps(overrides: Partial<ReplDeps> = {}): {
   input: PassThrough;
@@ -103,5 +139,74 @@ describe("runRepl", () => {
     input.end();
     await p;
     expect(outputText()).toContain("Unknown command");
+  });
+});
+
+describe("executeTurn (integration)", () => {
+  test("ask-mode turn renders answer and does not prompt", async () => {
+    const output = new PassThrough();
+    const chunks: Buffer[] = [];
+    output.on("data", (c) => chunks.push(c));
+    const deps = mockExecuteTurnDeps({ output });
+    await realExecuteTurn("how does auth work", null, deps);
+    const text = Buffer.concat(chunks).toString("utf8");
+    expect(text).toContain("mocked answer");
+    expect(text).not.toContain("Merge this?");
+  });
+
+  test("code-mode turn prompts and merges on y", async () => {
+    const output = new PassThrough();
+    const chunks: Buffer[] = [];
+    output.on("data", (c) => chunks.push(c));
+    const mergeInput = new PassThrough();
+    let applied = 0;
+    const deps = mockExecuteTurnDeps({
+      output,
+      mergeInput,
+      spawnOrchestrator: async (): Promise<OrchestratorOutput> => ({
+        intent: "code",
+        agreement: [],
+        disagreement: [],
+        bestAnswer: "picked claude",
+        mergePlan: {
+          pick: "claude",
+          branches: ["agents/claude/turn-1"],
+          rationale: "best",
+          followups: [],
+        },
+      }),
+      applyMerge: async () => {
+        applied++;
+        return { success: true };
+      },
+    });
+    const p = realExecuteTurn("add logout", null, deps);
+    mergeInput.write("y\n");
+    await p;
+    expect(applied).toBe(1);
+    const text = Buffer.concat(chunks).toString("utf8");
+    expect(text).toContain("Merge this?");
+  });
+
+  test("all-agents-failed path skips orchestrator and prints error", async () => {
+    const output = new PassThrough();
+    const chunks: Buffer[] = [];
+    output.on("data", (c) => chunks.push(c));
+    let orchestratorCalled = 0;
+    const deps = mockExecuteTurnDeps({
+      output,
+      fanOut: async (): Promise<AgentResult[]> => [
+        { id: "gemini", model: "g", status: "failed", branch: "", stdoutTail: "", diffSummary: "", diffPaths: [] },
+        { id: "claude", model: "c", status: "failed", branch: "", stdoutTail: "", diffSummary: "", diffPaths: [] },
+        { id: "codex", model: "x", status: "failed", branch: "", stdoutTail: "", diffSummary: "", diffPaths: [] },
+      ],
+      spawnOrchestrator: async () => {
+        orchestratorCalled++;
+        throw new Error("should not be called");
+      },
+    });
+    await realExecuteTurn("q", null, deps);
+    expect(orchestratorCalled).toBe(0);
+    expect(Buffer.concat(chunks).toString("utf8")).toContain("All agents failed");
   });
 });
