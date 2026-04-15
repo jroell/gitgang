@@ -98,6 +98,7 @@ For questions, the turn ends with the synthesis. For code changes, the orchestra
 
 **Session management:**
 
+    gg doctor                             # environment health check (binaries, env vars, git)
     gg sessions list                      # list recent sessions (with topic)
     gg sessions search <query>            # find sessions matching text (topic/answer)
     gg sessions delete <id> --yes         # remove a single session from disk
