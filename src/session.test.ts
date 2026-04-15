@@ -368,3 +368,105 @@ describe("findLastMergedBranch", () => {
     expect(findLastMergedBranch(events)).toBeNull();
   });
 });
+
+import { findLastAgentBranch, findLastPickedBranch } from "./session";
+
+describe("findLastAgentBranch", () => {
+  test("returns null when agent never started", () => {
+    expect(findLastAgentBranch([], "gemini")).toBeNull();
+  });
+  test("returns branch from most recent agent_start for that agent", () => {
+    const events: SessionEvent[] = [
+      { ts: "t", turn: 1, type: "agent_start", agent: "gemini", branch: "agents/gemini/turn-1" },
+      { ts: "t", turn: 1, type: "agent_start", agent: "claude", branch: "agents/claude/turn-1" },
+      { ts: "t", turn: 2, type: "agent_start", agent: "gemini", branch: "agents/gemini/turn-2" },
+    ];
+    expect(findLastAgentBranch(events, "gemini")).toBe("agents/gemini/turn-2");
+    expect(findLastAgentBranch(events, "claude")).toBe("agents/claude/turn-1");
+    expect(findLastAgentBranch(events, "codex")).toBeNull();
+  });
+  test("falls back to orchestrator mergePlan branches when no agent_start", () => {
+    const events: SessionEvent[] = [
+      {
+        ts: "t",
+        turn: 1,
+        type: "orchestrator",
+        payload: {
+          intent: "code",
+          agreement: [],
+          disagreement: [],
+          bestAnswer: "a",
+          mergePlan: {
+            pick: "claude",
+            branches: ["agents/claude/turn-1"],
+            rationale: "r",
+            followups: [],
+          },
+        },
+      },
+    ];
+    expect(findLastAgentBranch(events, "claude")).toBe("agents/claude/turn-1");
+    expect(findLastAgentBranch(events, "gemini")).toBeNull();
+  });
+});
+
+describe("findLastPickedBranch", () => {
+  test("returns null when no merge plan proposed", () => {
+    expect(findLastPickedBranch([])).toBeNull();
+  });
+  test("returns first branch from most recent mergePlan", () => {
+    const events: SessionEvent[] = [
+      {
+        ts: "t",
+        turn: 1,
+        type: "orchestrator",
+        payload: {
+          intent: "code",
+          agreement: [],
+          disagreement: [],
+          bestAnswer: "a",
+          mergePlan: {
+            pick: "gemini",
+            branches: ["agents/gemini/turn-1"],
+            rationale: "r",
+            followups: [],
+          },
+        },
+      },
+      {
+        ts: "t",
+        turn: 2,
+        type: "orchestrator",
+        payload: {
+          intent: "code",
+          agreement: [],
+          disagreement: [],
+          bestAnswer: "a",
+          mergePlan: {
+            pick: "claude",
+            branches: ["agents/claude/turn-2", "agents/gemini/turn-2"],
+            rationale: "r",
+            followups: [],
+          },
+        },
+      },
+    ];
+    expect(findLastPickedBranch(events)).toBe("agents/claude/turn-2");
+  });
+  test("ignores orchestrator events without mergePlan", () => {
+    const events: SessionEvent[] = [
+      {
+        ts: "t",
+        turn: 1,
+        type: "orchestrator",
+        payload: {
+          intent: "ask",
+          agreement: [],
+          disagreement: [],
+          bestAnswer: "a",
+        },
+      },
+    ];
+    expect(findLastPickedBranch(events)).toBeNull();
+  });
+});

@@ -38,6 +38,8 @@ import {
   appendEvent,
   findPendingMergePlan,
   findLastMergedBranch,
+  findLastAgentBranch,
+  findLastPickedBranch,
   type LoadedSession,
   type SessionEvent,
 } from "./session.js";
@@ -2693,13 +2695,14 @@ async function runInteractive(parsed: ParsedArgs): Promise<number> {
           "Commands:",
           "  /ask <msg>   force question mode",
           "  /code <msg>  force code mode",
-          "  /merge       apply last turn's merge plan",
-          "  /pr          open PR for last merge",
-          "  /history     show transcript",
-          "  /agents      show agent roster",
-          "  /set K V     set a runtime knob",
-          "  /help        this message",
-          "  /quit        exit",
+          "  /merge        apply last turn's merge plan",
+          "  /pr           open PR for last merge",
+          "  /diff [agent] show diff vs base for picked or named agent's branch",
+          "  /history      show transcript",
+          "  /agents       show agent roster",
+          "  /set K V      set a runtime knob",
+          "  /help         this message",
+          "  /quit         exit",
           "",
         ].join("\n"),
       );
@@ -2774,6 +2777,41 @@ async function runInteractive(parsed: ParsedArgs): Promise<number> {
       } catch (err) {
         process.stdout.write(
           `✗ PR creation failed: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      }
+    },
+    runDiffCommand: async (target) => {
+      let branch: string | null;
+      let label: string;
+      if (target === "picked") {
+        branch = findLastPickedBranch(session.events);
+        label = "reviewer-picked branch";
+      } else {
+        branch = findLastAgentBranch(session.events, target);
+        label = `${target}'s branch`;
+      }
+      if (!branch) {
+        process.stdout.write(
+          target === "picked"
+            ? "No merge plan has been proposed yet. Run a /code turn first.\n"
+            : `No branch recorded for ${target} yet. Run a turn first.\n`,
+        );
+        return;
+      }
+      try {
+        const diff = await git(repo, "diff", `${baseBranch}...${branch}`);
+        if (!diff.trim()) {
+          process.stdout.write(
+            `(${label} ${branch} has no diff vs ${baseBranch})\n`,
+          );
+        } else {
+          process.stdout.write(
+            `── diff ${baseBranch}...${branch} (${label}) ──\n${diff}\n`,
+          );
+        }
+      } catch (err) {
+        process.stdout.write(
+          `✗ git diff failed: ${err instanceof Error ? err.message : String(err)}\n`,
         );
       }
     },

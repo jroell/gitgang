@@ -63,6 +63,7 @@ function makeDeps(overrides: Partial<ReplDeps> = {}): {
     runSetCommand: async () => {},
     runMergeCommand: async () => {},
     runPrCommand: async () => {},
+    runDiffCommand: async () => {},
     banner: "gitgang interactive (test)",
     ...overrides,
   };
@@ -598,5 +599,35 @@ describe("executeTurn progress emissions", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
     const after = chunks.length;
     expect(after).toBe(before); // no new heartbeat lines after rejection
+  });
+});
+
+describe("REPL /diff dispatch", () => {
+  test("routes /diff to runDiffCommand with picked target", async () => {
+    const calls: Array<string> = [];
+    const { input, deps } = makeDeps({
+      runDiffCommand: async (target) => {
+        calls.push(target);
+      },
+    });
+    const p = runRepl(deps);
+    input.write("/diff\n");
+    input.write("/diff gemini\n");
+    input.write("/diff claude\n");
+    input.write("/diff codex\n");
+    input.write("/quit\n");
+    input.end();
+    await p;
+    expect(calls).toEqual(["picked", "gemini", "claude", "codex"]);
+  });
+
+  test("/diff with bogus target prints unknown error", async () => {
+    const { input, outputText, deps } = makeDeps();
+    const p = runRepl(deps);
+    input.write("/diff bogus\n");
+    input.write("/quit\n");
+    input.end();
+    await p;
+    expect(outputText()).toContain("Unknown command");
   });
 });

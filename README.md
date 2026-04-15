@@ -84,13 +84,16 @@ For questions, the turn ends with the synthesis. For code changes, the orchestra
 
 **Slash commands inside a session:**
 
-    /ask <msg>    force question mode
-    /code <msg>   force code mode
-    /history      print the transcript
-    /agents       show the agent roster and models
-    /set K V      set a runtime knob (e.g. /set automerge on)
-    /help         list commands
-    /quit         exit
+    /ask <msg>     force question mode
+    /code <msg>    force code mode
+    /merge         apply the previous turn's merge plan
+    /pr            open a PR for the last merge
+    /diff [agent]  show diff vs base for picked or named agent's branch
+    /history       print the transcript
+    /agents        show the agent roster and models
+    /set K V       set a runtime knob (e.g. /set automerge on)
+    /help          list commands
+    /quit          exit
 
 **Session management:**
 
