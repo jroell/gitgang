@@ -24,6 +24,7 @@ import {
   isAgentId,
   createWorktree,
   applyMergePlan,
+  applyInteractiveMergePlan,
   spawnProcess,
 } from "./cli";
 
@@ -787,6 +788,20 @@ describe("exports for interactive mode", () => {
   });
   test("applyMergePlan is exported", () => {
     expect(typeof applyMergePlan).toBe("function");
+  });
+  test("applyInteractiveMergePlan is exported", () => {
+    expect(typeof applyInteractiveMergePlan).toBe("function");
+    expect(applyInteractiveMergePlan.length).toBe(3);
+  });
+  test("applyInteractiveMergePlan rejects empty branches", async () => {
+    await expect(
+      applyInteractiveMergePlan("/tmp", "main", {
+        pick: "claude",
+        branches: [],
+        rationale: "none",
+        followups: [],
+      }),
+    ).rejects.toThrow(/no branches/);
   });
   test("systemConstraints is exported", () => {
     expect(typeof systemConstraints).toBe("function");

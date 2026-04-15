@@ -29,6 +29,7 @@ import {
   executeTurn,
   type ExecuteTurnDeps,
 } from "./repl.js";
+import type { MergePlan as OrchestratorMergePlan } from "./orchestrator.js";
 import { createSession, loadSession, type LoadedSession } from "./session.js";
 
 const VERSION = "1.7.0";
@@ -1921,6 +1922,53 @@ async function applyMergePlan(
   return { ok: true, branch: mergeBranch };
 }
 
+/**
+ * Apply a reviewer-picked merge plan in interactive REPL context.
+ *
+ * Differs from `applyMergePlan`: takes the orchestrator's `MergePlan` shape
+ * ({ pick, branches, rationale, followups }) directly, and performs the
+ * minimum real merge work — checkout base, `git merge --no-ff <branch>`,
+ * abort on conflict.
+ *
+ * Does NOT run post-merge checks or create a PR; `/pr` is a separate REPL
+ * command. Hybrid merges across multiple branches are not yet supported —
+ * this takes `plan.branches[0]` and logs a warning.
+ */
+export async function applyInteractiveMergePlan(
+  repoRoot: string,
+  base: string,
+  plan: OrchestratorMergePlan,
+): Promise<void> {
+  if (!plan.branches || plan.branches.length === 0) {
+    throw new Error("merge plan has no branches to apply");
+  }
+  if (plan.pick === "hybrid" && plan.branches.length > 1) {
+    console.warn(
+      C.yellow(
+        `hybrid merge across ${plan.branches.length} branches not yet supported; using first branch ${plan.branches[0]}`,
+      ),
+    );
+  }
+  const branch = plan.branches[0];
+
+  await git(repoRoot, "checkout", base);
+  try {
+    await git(
+      repoRoot,
+      "merge",
+      "--no-ff",
+      branch,
+      "-m",
+      `merge ${branch} per orchestrator plan`,
+    );
+  } catch (err) {
+    await git(repoRoot, "merge", "--abort").catch(() => {});
+    throw new Error(
+      `merge conflict applying ${branch}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 async function runRevisionRequests(
   opts: Opts,
   revisions: Array<{ agent: AgentId; instructions: string }>,
@@ -2545,10 +2593,13 @@ async function runInteractive(parsed: ParsedArgs): Promise<number> {
     mergeInput: process.stdin,
     fanOut,
     spawnOrchestrator,
-    applyMerge: async (_plan) => {
-      // Full applyMergePlan wiring is planned for Task 17+; signature expects
-      // (opts, worktrees, decision) which aren't available in REPL context yet.
-      return { success: false, error: "merge not yet wired in interactive mode" };
+    applyMerge: async (plan) => {
+      try {
+        await applyInteractiveMergePlan(repo, "main", plan);
+        return { success: true };
+      } catch (err) {
+        return { success: false, error: (err as Error).message };
+      }
     },
     cleanupWorktrees: async (turn: number) => {
       const turnDir = join(session.worktreesDir, `turn-${turn}`);
