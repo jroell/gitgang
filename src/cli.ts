@@ -56,7 +56,7 @@ import {
   type SessionEvent,
 } from "./session.js";
 
-const VERSION = "1.7.1";
+const VERSION = "1.8.0";
 const REQUIRED_BINARIES = ["git", "gemini", "claude", "codex"] as const;
 const DEFAULT_AGENT_IDLE_TIMEOUT_MS = Number(
   process.env.GITGANG_AGENT_IDLE_TIMEOUT ?? 7 * 60 * 1000,

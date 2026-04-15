@@ -1,5 +1,87 @@
 # GitGang Changelog
 
+## v1.8.0 — 2026-04-15
+
+Massive additive release. First npm publish since v1.6.0; bundles all work from the in-repo v1.7.0 + v1.7.1 + an overnight 17-feature polish pass. No breaking changes — every existing command still works exactly as in v1.6.0.
+
+### Interactive REPL mode
+
+- **`gg`** or **`gg -i`** — enters an interactive session. Each turn fans out to all three agents (gemini, claude, codex) in parallel worktrees; a fresh Claude Code orchestrator classifies intent, browses the code to verify claims, and emits a structured synthesis with explicit agreement/disagreement analysis, per-agent positions, and evidence citations (`path:line`).
+- **Question-mode turns** end with the synthesis.
+- **Code-mode turns** default to show-and-confirm merges (`Merge this? [y/N/e]`). Configure with `--automerge on|off|ask` or `/set automerge`.
+- Sessions persist to `.gitgang/sessions/<id>/`. Resume with `gg -i --resume` (most-recent) or `gg -i --resume <id>`. One-shot mode (`gg "task"`) is unchanged.
+- Full conversation history, session metadata, and per-turn agent outputs archived to disk.
+
+### Slash commands inside a session
+
+| Command | Effect |
+|---|---|
+| `/ask <msg>` | Force question-mode for this turn |
+| `/code <msg>` | Force code-mode for this turn |
+| `/only <agent> <msg>` | Run one turn with only gemini, claude, or codex |
+| `/skip <agent> <msg>` | Run one turn skipping one agent (rate limits, etc.) |
+| `/merge` | Apply a declined or deferred merge plan from a prior turn |
+| `/pr` | Push current branch and open a PR with structured description |
+| `/diff [agent]` | Show `git diff base...branch` for picked or named agent's work |
+| `/redo` | Re-execute the last user message as a fresh turn |
+| `/clear` | Forget in-context history (past turns stay on disk for sessions-show) |
+| `/history` | Print the session transcript |
+| `/agents` | Show agent roster and models |
+| `/set K V` | Set a runtime knob (e.g. `/set automerge on`) |
+| `/help`, `/quit` | Standard |
+
+### Session-management toolkit
+
+| Command | Purpose |
+|---|---|
+| `gg sessions list` | List recent sessions with Topic column |
+| `gg sessions show <id>` | Print a past session transcript |
+| `gg sessions stats <id>` | Aggregate summary (turns, duration, agent success/fail, merges) |
+| `gg sessions export <id>` | Full markdown transcript to stdout (or `--output PATH`) |
+| `gg sessions search <query>` | Case-insensitive substring search across user messages + answers |
+| `gg sessions delete <id> --yes` | Remove a single session |
+| `gg sessions prune --older-than <duration> [--yes]` | Bulk delete old sessions (dry-run by default) |
+
+### New top-level subcommands
+
+- **`gg doctor`** — environment health check (Node version, `git`/`gemini`/`claude`/`codex` binaries, API keys, git-repo status, `.gitgang/` writability). Color-coded output with fix hints; exit 1 on any required-check failure.
+- **`gg init`** — scaffolds `.gitgang/config.json` with documented per-repo defaults (`automerge`, `reviewer`, `heartbeatIntervalMs`, `timeoutMs`, `models`). CLI flags > env vars > config file > built-in defaults.
+- **`gg completions bash|zsh|fish`** — emits shell completion scripts for tab-completion of subcommands.
+- **`--json`** output mode on `gg sessions list`, `gg sessions stats`, and `gg doctor` for scripting and `jq` pipelines.
+
+### UX improvements
+
+- **Live per-agent progress** during each turn: transition markers (`▸ gemini started`, `✓ codex done`, `✗ claude failed`, `⏱ gemini timeout`) plus a 30s heartbeat line summarizing running agents.
+- **Terminal markdown rendering** of the orchestrator's `bestAnswer` — headers in bold cyan, code blocks in a fenced gutter, inline code highlighted, lists, blockquotes, and linkified URLs.
+- **Smart PR descriptions** — `/pr` writes a structured markdown body from the session log (summary / merge plan / disagreements / conversation excerpt / signature) instead of `gh pr create --fill`'s generic git-log output.
+- **Per-agent log files** at `<session>/logs/turn-N/<agent>.log` — full stdout, prompt, status, timing archived for every agent. Survives worktree cleanup.
+- **Ctrl+C handler** — first press cancels the active turn by SIGTERM'ing active sub-agents; second press within 3 seconds exits cleanly.
+- **Long-history warning** — one-line hint when accumulated conversation exceeds ~50KB.
+- **Orphaned-worktree cleanup** on session start.
+- **Session log diagnostics** — malformed `session.jsonl` lines recorded to `debug/resume-errors.log` during resume.
+- **Hybrid merges** — multi-branch merge plans now apply every listed branch sequentially (previously silently used only the first).
+
+### Bug fixes and stability
+
+- Fixed Gemini default model name — now uses `gemini-3.1-pro-preview` (was the invalid `gemini-3.1-pro`, which 404'd on every request).
+- Fixed hard-coded `main` base branch in interactive mode — now detects current branch dynamically (was broken for `master`-default repos).
+- Added `ensureCleanTree` guard at interactive session start (spec said "refuse dirty trees"; wasn't actually called).
+- Added `.gitgang/` and `.worktrees/` to install-time gitignore.
+- Removed stale `src/cli.ts.bak` committed to the repo.
+
+### Developer notes
+
+- Tests: **537 passing** across 21 test files (up from ~150 at v1.6.0).
+- All new features built with strict TDD against dependency-injected interfaces — every subprocess, stream, and fs op has a test double.
+- 17 new modules with isolated unit tests: `src/session.ts`, `src/repl.ts`, `src/orchestrator.ts`, `src/renderer.ts`, `src/markdown.ts`, `src/turn.ts`, `src/slash.ts`, `src/confirm.ts`, `src/doctor.ts`, `src/config.ts`, `src/completions.ts`, plus `src/interactive.integration.test.ts`.
+- Built bundle: ~130KB (up from ~70KB at v1.6.0).
+
+### Migration
+
+Nothing. Every v1.6.0 invocation still works unchanged. Interactive mode, sessions, doctor, init, completions, and `--json` are all additive.
+
+
+
 ## v1.7.1 — 2026-04-15
 
 Polish and hardening pass on interactive mode. No breaking changes.
