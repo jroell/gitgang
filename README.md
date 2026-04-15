@@ -2,7 +2,7 @@
 
 > The gang's all here to code — Multi-agent AI orchestration for autonomous software development
 
-**GitGang** is a Node-based CLI (bundled with esbuild) that coordinates multiple AI agents (Gemini, Claude, and Codex) to collaboratively solve complex coding tasks. Each agent works in isolation on git worktrees, and a reviewer agent merges the best solutions.
+**GitGang** is a Node-based CLI (bundled with esbuild) that coordinates multiple AI agents (Gemini, Claude, and Codex) to collaboratively solve complex coding tasks. In git repos, agents work in isolated git worktrees and a reviewer agent merges the best solutions. Outside git repos, interactive mode falls back to read-only Q&A.
 
 [![npm version](https://img.shields.io/npm/v/gitgang.svg)](https://www.npmjs.com/package/gitgang)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -15,7 +15,8 @@
 - **Git Worktree Isolation**: Each agent works in its own git worktree and branch
 - **Intelligent Review Loop**: Codex reviewer analyzes all solutions and merges the best parts
 - **Interactive Command Palette**: Monitor and control agents in real-time
-- **Autonomous Execution**: Agents work independently with full permissions (optional yolo mode)
+- **Autonomous Execution**: In git-backed code flows, agents work independently with full permissions (optional yolo mode)
+- **Non-Git Q&A Mode**: Run `gg -i` from any directory — agents answer questions in read-only mode even outside git repos
 - **Single-File Bundle**: Lightweight Node CLI built with esbuild (no Bun required)
 
 ## 📦 Installation
@@ -74,13 +75,19 @@ Start a conversational session with all three agents:
     gg -i           # same
     gg -i "how does auth work"   # pre-loads first turn
 
-Every turn sends your message to gemini, claude, and codex in parallel worktrees. A Claude Code orchestrator then inspects the responses, browses the code to verify claims, and synthesizes an answer with:
+In git repos, every turn sends your message to gemini, claude, and codex in parallel worktrees. Outside git repos, interactive mode runs the same agents against your current directory in read-only Q&A mode. A Claude Code orchestrator then inspects the responses, browses the code to verify claims, and synthesizes an answer with:
 
 - Points of agreement across agents
 - Points of disagreement with the orchestrator's verdict and code citations
 - A single best answer
 
 For questions, the turn ends with the synthesis. For code changes, the orchestrator proposes a merge plan that you confirm with `[y/N/e]`.
+
+### Non-Git Q&A Mode
+
+You can also run `gg -i` from **any directory**, even outside a git repo. GitGang enters a read-only Q&A mode where agents can read files in your working directory (via Read, Grep, Glob, `ls`, `cat`, `git log`) but cannot edit files, create commits, or run mutating commands. No worktrees are created. Slash commands like `/merge` and `/pr` will prompt you to run `git init` for full code-change flow.
+
+Sessions in non-git mode are stored globally at `~/.gitgang/sessions/` instead of the per-repo `.gitgang/sessions/` directory.
 
 **Slash commands inside a session:**
 
@@ -120,7 +127,7 @@ For questions, the turn ends with the synthesis. For code changes, the orchestra
     gg -i --resume                        # resume most-recent session
     gg -i --resume <id>                   # resume a specific session
 
-Sessions live under `.gitgang/sessions/<id>/` (auto-added to `.gitignore` on install).
+Sessions live under `.gitgang/sessions/<id>/` (auto-added to `.gitignore` on install). Outside a git repo, sessions are stored at `~/.gitgang/sessions/`.
 
 ## 🎮 Interactive Commands
 
@@ -129,7 +136,7 @@ While agents are running, use these slash commands:
 | Command | Description |
 |---------|-------------|
 | `/status` | Show agent status and branches |
-| `/agents` | List all agent worktrees |
+| `/agents` | List all active agents and their worktrees (if any) |
 | `/logs <agent>` | View logs for gemini, claude, or codex |
 | `/nudge <agent> <msg>` | Send message to specific agent |
 | `/kill <agent>` | Terminate a running agent |
@@ -138,7 +145,9 @@ While agents are running, use these slash commands:
 
 ## 🏗️ How It Works
 
-1. **Initialization**: Creates three git worktrees from your current branch
+The full flow below describes git-backed code-change runs. In non-git interactive mode, GitGang skips worktree, diff, merge, and PR steps and stays read-only.
+
+1. **Initialization**: In git repos, creates three git worktrees from your current branch. Outside git repos, interactive mode skips worktree creation and stays read-only
 2. **Parallel Execution**: Launches Gemini, Claude, and Codex simultaneously with live spinners
 3. **Real-Time Monitoring**: Dashboard updates every 2 seconds showing:
    - Agent status (pending, working, complete)
@@ -162,7 +171,7 @@ While agents are running, use these slash commands:
 ## 📋 Requirements
 
 - **macOS** (tested; should work anywhere with git and Node)
-- **Git** repository with clean working tree
+- **Git** repository with clean working tree (required for one-shot and code-change modes; interactive Q&A works without git)
 - **Node.js 18+** / **npm** for installation
 - **AI CLI Tools**: gemini, claude, codex
 - **Terminal**: RGB color support recommended (iTerm2, Terminal.app, Hyper, etc.)
@@ -215,8 +224,8 @@ export NPM_TOKEN='your_npm_token_here'
 
 ## ⚠️ Important Notes
 
-- Requires a **clean git working tree** (commit or stash changes first)
-- Agents have **full authorization** to modify files and run commands in yolo mode
+- One-shot and code-change modes require a **clean git working tree** (commit or stash changes first). Interactive Q&A mode (`gg -i`) works outside git repos in read-only mode
+- In git-backed code-change flows, agents have **full authorization** to modify files and run commands in yolo mode. Outside git repos, interactive Q&A mode is read-only
 - Each agent works in **isolated git worktrees** to prevent conflicts
 - The reviewer creates a **new merge branch** for the final solution
 - Worktrees are **automatically cleaned up** after completion
