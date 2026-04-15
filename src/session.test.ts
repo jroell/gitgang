@@ -207,3 +207,164 @@ describe("loadSession / reconstructHistory", () => {
     expect(history).toHaveLength(0);
   });
 });
+
+import { readEventsWithErrors, readEventsLogged } from "./session";
+
+describe("readEventsWithErrors", () => {
+  test("returns empty arrays for missing file", () => {
+    const result = readEventsWithErrors("/nonexistent/path/xyz.jsonl");
+    expect(result.events).toEqual([]);
+    expect(result.errors).toEqual([]);
+  });
+
+  test("separates valid events from malformed lines with line numbers", () => {
+    const session = createSession(tmp, {
+      models: { gemini: "g", claude: "c", codex: "x" },
+      reviewer: "codex",
+      automerge: "ask",
+    });
+    writeFileSync(
+      session.logPath,
+      '{"ts":"t1","turn":1,"type":"user","text":"ok","forcedMode":null}\n' +
+        "not json\n" +
+        '{"ts":"t2","turn":1,"type":"user","text":"ok2","forcedMode":null}\n' +
+        "{broken\n",
+    );
+    const result = readEventsWithErrors(session.logPath);
+    expect(result.events).toHaveLength(2);
+    expect(result.errors).toHaveLength(2);
+    expect(result.errors[0].lineNumber).toBe(2);
+    expect(result.errors[0].raw).toBe("not json");
+    expect(result.errors[1].lineNumber).toBe(4);
+  });
+});
+
+describe("readEventsLogged", () => {
+  test("writes resume-errors.log when malformed lines found", () => {
+    const session = createSession(tmp, {
+      models: { gemini: "g", claude: "c", codex: "x" },
+      reviewer: "codex",
+      automerge: "ask",
+    });
+    writeFileSync(
+      session.logPath,
+      '{"ts":"t1","turn":1,"type":"user","text":"ok","forcedMode":null}\n' +
+        "not json\n",
+    );
+    const events = readEventsLogged(session.logPath, session.debugDir);
+    expect(events).toHaveLength(1);
+    const errLog = join(session.debugDir, "resume-errors.log");
+    expect(existsSync(errLog)).toBe(true);
+    const contents = readFileSync(errLog, "utf8");
+    expect(contents).toContain("malformed line");
+    expect(contents).toContain("line 2");
+    expect(contents).toContain("not json");
+  });
+
+  test("does not write log when no errors", () => {
+    const session = createSession(tmp, {
+      models: { gemini: "g", claude: "c", codex: "x" },
+      reviewer: "codex",
+      automerge: "ask",
+    });
+    writeFileSync(
+      session.logPath,
+      '{"ts":"t1","turn":1,"type":"user","text":"ok","forcedMode":null}\n',
+    );
+    readEventsLogged(session.logPath, session.debugDir);
+    expect(existsSync(join(session.debugDir, "resume-errors.log"))).toBe(false);
+  });
+});
+
+import { findPendingMergePlan, findLastMergedBranch } from "./session";
+
+describe("findPendingMergePlan", () => {
+  const mkOrch = (turn: number, withPlan: boolean): SessionEvent => ({
+    ts: "t",
+    turn,
+    type: "orchestrator",
+    payload: {
+      intent: withPlan ? "code" : "ask",
+      agreement: [],
+      disagreement: [],
+      bestAnswer: "a",
+      ...(withPlan
+        ? {
+            mergePlan: {
+              pick: "claude" as const,
+              branches: [`b-${turn}`],
+              rationale: "r",
+              followups: [],
+            },
+          }
+        : {}),
+    },
+  });
+  const mkMerge = (
+    turn: number,
+    outcome: "merged" | "declined",
+  ): SessionEvent => ({
+    ts: "t",
+    turn,
+    type: "merge",
+    branch: `b-${turn}`,
+    outcome,
+  });
+
+  test("returns null for empty log", () => {
+    expect(findPendingMergePlan([])).toBeNull();
+  });
+
+  test("returns null when no orchestrator events have mergePlan", () => {
+    expect(findPendingMergePlan([mkOrch(1, false)])).toBeNull();
+  });
+
+  test("returns most recent unmerged plan", () => {
+    const result = findPendingMergePlan([
+      mkOrch(1, true),
+      mkMerge(1, "merged"),
+      mkOrch(2, true),
+      mkMerge(2, "declined"),
+      mkOrch(3, true),
+    ]);
+    expect(result?.turn).toBe(3);
+  });
+
+  test("returns declined plan when newer", () => {
+    const result = findPendingMergePlan([
+      mkOrch(1, true),
+      mkMerge(1, "merged"),
+      mkOrch(2, true),
+      mkMerge(2, "declined"),
+    ]);
+    expect(result?.turn).toBe(2);
+  });
+
+  test("skips merged turns", () => {
+    const result = findPendingMergePlan([
+      mkOrch(1, true),
+      mkMerge(1, "merged"),
+    ]);
+    expect(result).toBeNull();
+  });
+});
+
+describe("findLastMergedBranch", () => {
+  test("returns null when no merges", () => {
+    expect(findLastMergedBranch([])).toBeNull();
+  });
+  test("returns most recent merged branch", () => {
+    const events: SessionEvent[] = [
+      { ts: "t", turn: 1, type: "merge", branch: "b1", outcome: "merged" },
+      { ts: "t", turn: 2, type: "merge", branch: "b2", outcome: "declined" },
+      { ts: "t", turn: 3, type: "merge", branch: "b3", outcome: "merged" },
+    ];
+    expect(findLastMergedBranch(events)).toBe("b3");
+  });
+  test("ignores declined merges", () => {
+    const events: SessionEvent[] = [
+      { ts: "t", turn: 1, type: "merge", branch: "b1", outcome: "declined" },
+    ];
+    expect(findLastMergedBranch(events)).toBeNull();
+  });
+});

@@ -70,7 +70,9 @@ describe("renderSynthesis", () => {
     const s = stripAnsi(renderSynthesis(out, { color: false }));
     expect(s).toContain("Proposed merge: claude");
     expect(s).toContain("cleanest diff");
-    expect(s).toContain("Merge this? [y/N/e]");
+    // "Merge this? [y/N/e]" is no longer rendered here — it's written by
+    // promptMergeConfirm only when the prompt will actually read input.
+    expect(s).not.toContain("Merge this?");
   });
 
   test("compact footer when everything aligns and answer is short", () => {

@@ -27,12 +27,22 @@ import {
   createRealFanOut,
   createRealOrchestrator,
   executeTurn,
+  cancelActiveChildren,
+  activeChildCount,
   type ExecuteTurnDeps,
 } from "./repl.js";
 import type { MergePlan as OrchestratorMergePlan } from "./orchestrator.js";
-import { createSession, loadSession, type LoadedSession, type SessionEvent } from "./session.js";
+import {
+  createSession,
+  loadSession,
+  appendEvent,
+  findPendingMergePlan,
+  findLastMergedBranch,
+  type LoadedSession,
+  type SessionEvent,
+} from "./session.js";
 
-const VERSION = "1.7.0";
+const VERSION = "1.7.1";
 const REQUIRED_BINARIES = ["git", "gemini", "claude", "codex"] as const;
 const DEFAULT_AGENT_IDLE_TIMEOUT_MS = Number(
   process.env.GITGANG_AGENT_IDLE_TIMEOUT ?? 7 * 60 * 1000,
@@ -1925,14 +1935,11 @@ async function applyMergePlan(
 /**
  * Apply a reviewer-picked merge plan in interactive REPL context.
  *
- * Differs from `applyMergePlan`: takes the orchestrator's `MergePlan` shape
- * ({ pick, branches, rationale, followups }) directly, and performs the
- * minimum real merge work — checkout base, `git merge --no-ff <branch>`,
- * abort on conflict.
- *
- * Does NOT run post-merge checks or create a PR; `/pr` is a separate REPL
- * command. Hybrid merges across multiple branches are not yet supported —
- * this takes `plan.branches[0]` and logs a warning.
+ * Takes the orchestrator's `MergePlan` shape ({ pick, branches, rationale,
+ * followups }), checks out `base`, and merges each listed branch with
+ * `git merge --no-ff`. Hybrid picks merge all branches in order; any other
+ * pick merges only `branches[0]`. On conflict, runs `git merge --abort` and
+ * throws. Does NOT run post-merge checks or create a PR.
  */
 export async function applyInteractiveMergePlan(
   repoRoot: string,
@@ -1942,30 +1949,30 @@ export async function applyInteractiveMergePlan(
   if (!plan.branches || plan.branches.length === 0) {
     throw new Error("merge plan has no branches to apply");
   }
-  if (plan.pick === "hybrid" && plan.branches.length > 1) {
-    console.warn(
-      C.yellow(
-        `hybrid merge across ${plan.branches.length} branches not yet supported; using first branch ${plan.branches[0]}`,
-      ),
-    );
-  }
-  const branch = plan.branches[0];
 
   await git(repoRoot, "checkout", base);
-  try {
-    await git(
-      repoRoot,
-      "merge",
-      "--no-ff",
-      branch,
-      "-m",
-      `merge ${branch} per orchestrator plan`,
-    );
-  } catch (err) {
-    await git(repoRoot, "merge", "--abort").catch(() => {});
-    throw new Error(
-      `merge conflict applying ${branch}: ${err instanceof Error ? err.message : String(err)}`,
-    );
+
+  const isHybrid = plan.pick === "hybrid" && plan.branches.length > 1;
+  const branches = isHybrid ? plan.branches : [plan.branches[0]];
+
+  for (const branch of branches) {
+    try {
+      await git(
+        repoRoot,
+        "merge",
+        "--no-ff",
+        branch,
+        "-m",
+        isHybrid
+          ? `merge ${branch} (hybrid plan, ${branches.length} branches)`
+          : `merge ${branch} per orchestrator plan`,
+      );
+    } catch (err) {
+      await git(repoRoot, "merge", "--abort").catch(() => {});
+      throw new Error(
+        `merge conflict applying ${branch}${isHybrid ? ` (hybrid, failed at branch ${branches.indexOf(branch) + 1}/${branches.length})` : ""}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 }
 
@@ -2590,6 +2597,8 @@ async function runInteractive(parsed: ParsedArgs): Promise<number> {
     session = loadSession(created.dir);
   }
 
+  cleanOrphanedWorktrees(session.worktreesDir, process.stderr);
+
   const fanOut = createRealFanOut({
     agentIds: parsed.activeAgents?.length ? parsed.activeAgents : ["gemini", "claude", "codex"],
     models,
@@ -2626,6 +2635,36 @@ async function runInteractive(parsed: ParsedArgs): Promise<number> {
       if (existsSync(turnDir)) rmSync(turnDir, { recursive: true, force: true });
     },
   };
+
+  // Ctrl+C handler: first press cancels current turn (kills subprocesses);
+  // a second press within 3s exits. Outside a turn, the same 2-press pattern
+  // exits. Installed once per interactive session.
+  let pendingExit = false;
+  let pendingExitTimer: ReturnType<typeof setTimeout> | null = null;
+  const armPendingExit = () => {
+    pendingExit = true;
+    if (pendingExitTimer) clearTimeout(pendingExitTimer);
+    pendingExitTimer = setTimeout(() => {
+      pendingExit = false;
+      pendingExitTimer = null;
+    }, 3000);
+  };
+  const sigintHandler = () => {
+    if (pendingExit) {
+      process.stdout.write("\nExiting.\n");
+      process.exit(130);
+    }
+    if (activeChildCount() > 0) {
+      const killed = cancelActiveChildren();
+      process.stdout.write(
+        `\n⚠ Turn cancelled. Signalled ${killed} subprocess(es). Press Ctrl+C again within 3s to exit.\n`,
+      );
+    } else {
+      process.stdout.write("\n(Press Ctrl+C again within 3s to exit.)\n");
+    }
+    armPendingExit();
+  };
+  process.on("SIGINT", sigintHandler);
 
   if (parsed.opener && parsed.opener.trim().length > 0) {
     await executeTurn(parsed.opener, null, executeTurnDeps);
@@ -2674,12 +2713,76 @@ async function runInteractive(parsed: ParsedArgs): Promise<number> {
       }
     },
     runMergeCommand: async () => {
-      process.stdout.write("(/merge not yet implemented — see v1.7.1)\n");
+      const pending = findPendingMergePlan(session.events);
+      if (!pending) {
+        process.stdout.write(
+          "No pending merge plan to apply. Use /code to request a merge first.\n",
+        );
+        return;
+      }
+      process.stdout.write(
+        `Applying pending plan from turn ${pending.turn} (pick: ${pending.plan.pick})...\n`,
+      );
+      try {
+        await applyInteractiveMergePlan(repo, baseBranch, pending.plan);
+        const mergeEvent: SessionEvent = {
+          ts: new Date().toISOString(),
+          turn: pending.turn,
+          type: "merge",
+          branch: pending.plan.branches[0] ?? "",
+          outcome: "merged",
+        };
+        appendEvent(session.logPath, mergeEvent);
+        session.events.push(mergeEvent);
+        process.stdout.write(`✓ Merged ${pending.plan.branches.join(", ")}.\n`);
+      } catch (err) {
+        process.stdout.write(
+          `✗ Merge failed: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      }
     },
     runPrCommand: async () => {
-      process.stdout.write("(/pr not yet implemented — see v1.7.1)\n");
+      const merged = findLastMergedBranch(session.events);
+      if (!merged) {
+        process.stdout.write(
+          "No merged branch in this session. Use /merge (or approve a merge prompt) first.\n",
+        );
+        return;
+      }
+      try {
+        const branch = await currentBranch(repo);
+        process.stdout.write(`Pushing ${branch} and opening PR...\n`);
+        await git(repo, "push", "-u", "origin", branch);
+        const ghProc = spawnProcess(["gh", "pr", "create", "--fill"], { cwd: repo });
+        const exitCode = await (ghProc as SpawnedProcess).exited;
+        if (exitCode !== 0) {
+          process.stdout.write(
+            `✗ gh pr create exited with code ${exitCode}. Is the gh CLI installed and authenticated?\n`,
+          );
+        } else {
+          const prMarkerEvent: SessionEvent = {
+            ts: new Date().toISOString(),
+            turn: 0,
+            type: "merge",
+            branch: merged,
+            outcome: "pr_only",
+          };
+          appendEvent(session.logPath, prMarkerEvent);
+          session.events.push(prMarkerEvent);
+          process.stdout.write("✓ PR created.\n");
+        }
+      } catch (err) {
+        process.stdout.write(
+          `✗ PR creation failed: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      }
     },
   });
+
+  // Clean REPL exit (e.g., /quit) — detach the SIGINT handler so the caller
+  // can process.exit(0) normally.
+  process.off("SIGINT", sigintHandler);
+  if (pendingExitTimer) clearTimeout(pendingExitTimer);
 
   return 0;
 }
@@ -2760,6 +2863,38 @@ function runSessionsShow(id: string): number {
   const loaded = loadSession(dir);
   process.stdout.write(formatSessionShow(loaded.events));
   return 0;
+}
+
+/**
+ * Clean up any turn-N/ subdirs left behind by a crashed prior session.
+ * Called at interactive session start. Best-effort — failures are logged
+ * but do not abort startup.
+ */
+export function cleanOrphanedWorktrees(
+  worktreesDir: string,
+  stderr: NodeJS.WritableStream,
+): number {
+  if (!existsSync(worktreesDir)) return 0;
+  const turnDirs = readdirSync(worktreesDir).filter((name) => name.startsWith("turn-"));
+  if (turnDirs.length === 0) return 0;
+  let cleaned = 0;
+  for (const name of turnDirs) {
+    const path = join(worktreesDir, name);
+    try {
+      rmSync(path, { recursive: true, force: true });
+      cleaned++;
+    } catch (err) {
+      stderr.write(
+        `⚠ could not remove orphaned worktree ${path}: ${(err as Error).message}\n`,
+      );
+    }
+  }
+  if (cleaned > 0) {
+    stderr.write(
+      `ℹ cleaned up ${cleaned} orphaned turn worktree${cleaned === 1 ? "" : "s"} from prior session\n`,
+    );
+  }
+  return cleaned;
 }
 
 function mostRecentSessionDir(root: string): string {

@@ -1,5 +1,26 @@
 # GitGang Changelog
 
+## v1.7.1 — 2026-04-15
+
+Polish and hardening pass on interactive mode. No breaking changes.
+
+**New features**
+
+- **`/merge` and `/pr` commands are now real.** `/merge` applies the most recent orchestrator merge plan that was declined or deferred (useful after answering `N` on a prompt). `/pr` pushes the current branch with `-u origin` and runs `gh pr create --fill` for the most recently merged branch.
+- **Ctrl+C handler.** First press cancels the active turn by sending `SIGTERM` to every running sub-agent and the orchestrator. A second press within 3 seconds exits the session with code 130.
+- **Hybrid merge plans merge every listed branch.** Previously only `branches[0]` was applied with a warning; `pick: "hybrid"` with multiple branches now runs `git merge --no-ff` for each in order, aborting the whole operation on any conflict.
+- **Long-history warning.** After each turn, if the accumulated conversation exceeds ~50 KB, a one-line hint suggests `/quit` and a fresh session.
+- **Orphaned worktree cleanup on startup.** If a prior session crashed and left `turn-N/` directories behind, new sessions remove them and print a one-line notice.
+- **Corrupt session log diagnostics.** Malformed lines in `session.jsonl` now get recorded (with line number, reason, and raw text) to `debug/resume-errors.log` during resume.
+- **Cleaner merge prompt rendering.** `"Merge this? [y/N/e]"` is now written only when the prompt will actually read input (automerge mode `ask`). In `automerge=off` mode, a `"Branches retained. Use /merge to apply the plan."` message replaces the misleading prompt.
+
+**Internal changes**
+
+- New exports from `src/session.ts`: `findPendingMergePlan(events)`, `findLastMergedBranch(events)`, `readEventsWithErrors(logPath)`, `readEventsLogged(logPath, debugDir)`.
+- New exports from `src/repl.ts`: `cancelActiveChildren()`, `activeChildCount()`, `estimateHistoryBytes(history, userMessage, output)`, `LONG_HISTORY_WARN_BYTES`.
+- New export from `src/cli.ts`: `cleanOrphanedWorktrees(worktreesDir, stderr)`.
+- Tests: 253/253 passing (+19 since v1.7.0).
+
 ## v1.7.0 — 2026-04-15
 
 **New: Interactive mode**
