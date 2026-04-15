@@ -89,3 +89,27 @@ describe("parseSlashCommand", () => {
     });
   });
 });
+
+describe("/diff", () => {
+  test("/diff alone targets picked", () => {
+    expect(parseSlashCommand("/diff")).toEqual({ kind: "diff", target: "picked" });
+  });
+  test("/diff gemini targets gemini", () => {
+    expect(parseSlashCommand("/diff gemini")).toEqual({ kind: "diff", target: "gemini" });
+  });
+  test("/diff claude targets claude", () => {
+    expect(parseSlashCommand("/diff claude")).toEqual({ kind: "diff", target: "claude" });
+  });
+  test("/diff codex targets codex", () => {
+    expect(parseSlashCommand("/diff codex")).toEqual({ kind: "diff", target: "codex" });
+  });
+  test("/diff bogus is unknown", () => {
+    expect(parseSlashCommand("/diff bogus")).toEqual({ kind: "unknown", raw: "/diff bogus" });
+  });
+  test("/diff ignores trailing whitespace", () => {
+    expect(parseSlashCommand("/diff   gemini  ")).toEqual({
+      kind: "diff",
+      target: "gemini",
+    });
+  });
+});

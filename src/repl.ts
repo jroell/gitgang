@@ -1,5 +1,5 @@
 import { createInterface } from "node:readline";
-import type { ForcedMode } from "./slash";
+import type { ForcedMode, DiffTarget } from "./slash";
 import { parseSlashCommand } from "./slash";
 import type { LoadedSession } from "./session";
 import { appendEvent, reconstructHistory } from "./session";
@@ -23,6 +23,7 @@ export type ReplDeps = {
   runSetCommand: (key: string, value: string) => Promise<void>;
   runMergeCommand: () => Promise<void>;
   runPrCommand: () => Promise<void>;
+  runDiffCommand: (target: DiffTarget) => Promise<void>;
 };
 
 export async function runRepl(deps: ReplDeps): Promise<void> {
@@ -63,6 +64,9 @@ export async function runRepl(deps: ReplDeps): Promise<void> {
         break;
       case "pr":
         await deps.runPrCommand();
+        break;
+      case "diff":
+        await deps.runDiffCommand(cmd.target);
         break;
       case "unknown":
         deps.output.write(`Unknown command: ${cmd.raw}\n`);

@@ -220,3 +220,47 @@ export function findLastMergedBranch(events: SessionEvent[]): string | null {
   }
   return null;
 }
+
+/**
+ * Find the most recent branch associated with a given agent for any turn.
+ * Used by /diff <agent> to inspect what an agent produced, even if its plan
+ * wasn't picked. Returns null if the agent never ran or never got a branch.
+ */
+export function findLastAgentBranch(
+  events: SessionEvent[],
+  agent: AgentId,
+): string | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.type === "agent_start" && e.agent === agent && e.branch) return e.branch;
+  }
+  // Fall back: agent_end events don't carry branch names, but orchestrator
+  // payloads may reference them.
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.type === "orchestrator") {
+      const plan = e.payload.mergePlan;
+      if (plan) {
+        for (const branch of plan.branches) {
+          if (branch.includes(`/${agent}/`)) return branch;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Find the reviewer-picked branch from the most recent orchestrator event
+ * that proposed a merge plan. Used by bare /diff (no agent argument).
+ * Returns null if no merge plan has been proposed yet.
+ */
+export function findLastPickedBranch(events: SessionEvent[]): string | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.type !== "orchestrator") continue;
+    const plan = e.payload.mergePlan;
+    if (plan && plan.branches.length > 0) return plan.branches[0];
+  }
+  return null;
+}

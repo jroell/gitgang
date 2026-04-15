@@ -1,5 +1,7 @@
 export type ForcedMode = "ask" | "code" | null;
 
+export type DiffTarget = "gemini" | "claude" | "codex" | "picked";
+
 export type SlashCommand =
   | { kind: "message"; text: string; forcedMode: ForcedMode }
   | { kind: "merge" }
@@ -9,6 +11,7 @@ export type SlashCommand =
   | { kind: "help" }
   | { kind: "quit" }
   | { kind: "set"; key: string; value: string }
+  | { kind: "diff"; target: DiffTarget }
   | { kind: "unknown"; raw: string };
 
 export function parseSlashCommand(raw: string): SlashCommand {
@@ -44,6 +47,14 @@ export function parseSlashCommand(raw: string): SlashCommand {
       if (parts.length < 2) return { kind: "unknown", raw: input };
       const [key, ...valueParts] = parts;
       return { kind: "set", key, value: valueParts.join(" ") };
+    }
+    case "/diff": {
+      const target = tail.split(/\s+/).filter(Boolean)[0];
+      if (!target) return { kind: "diff", target: "picked" };
+      if (target === "gemini" || target === "claude" || target === "codex") {
+        return { kind: "diff", target };
+      }
+      return { kind: "unknown", raw: input };
     }
     default:
       return { kind: "unknown", raw: input };
