@@ -90,6 +90,8 @@ For questions, the turn ends with the synthesis. For code changes, the orchestra
     /pr            open a PR for the last merge
     /diff [agent]  show diff vs base for picked or named agent's branch
     /redo          re-run the last user message as a fresh turn
+    /only <agent> <msg>  run this single turn with only one agent (gemini|claude|codex)
+    /skip <agent> <msg>  run this single turn skipping one agent
     /history       print the transcript
     /agents        show the agent roster and models
     /set K V       set a runtime knob (e.g. /set automerge on)

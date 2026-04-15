@@ -2780,7 +2780,8 @@ async function runInteractive(parsed: ParsedArgs): Promise<number> {
     input: process.stdin,
     output: process.stdout,
     banner: `gitgang v${VERSION} interactive — session ${session.id}`,
-    executeTurn: (text, forcedMode) => executeTurn(text, forcedMode, executeTurnDeps),
+    executeTurn: (text, forcedMode, agentFilter) =>
+      executeTurn(text, forcedMode, executeTurnDeps, agentFilter),
     showHistory: async () => {
       for (const e of session.events) {
         if (e.type === "user") process.stdout.write(`[turn ${e.turn}] you: ${e.text}\n`);
@@ -2803,6 +2804,8 @@ async function runInteractive(parsed: ParsedArgs): Promise<number> {
           "  /pr           open PR for last merge",
           "  /diff [agent] show diff vs base for picked or named agent's branch",
           "  /redo         re-run the last user message as a fresh turn",
+          "  /only <agent> <msg>  run this single turn with only one agent",
+          "  /skip <agent> <msg>  run this single turn skipping one agent",
           "  /history      show transcript",
           "  /agents       show agent roster",
           "  /set K V      set a runtime knob",

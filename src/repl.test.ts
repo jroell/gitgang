@@ -10,6 +10,7 @@ import {
   type ExecuteTurnDeps,
   estimateHistoryBytes,
   LONG_HISTORY_WARN_BYTES,
+  applyAgentFilter,
 } from "./repl";
 
 function mockExecuteTurnDeps(overrides: Partial<ExecuteTurnDeps> = {}): ExecuteTurnDeps {
@@ -740,5 +741,109 @@ describe("REPL /redo dispatch", () => {
     input.end();
     await p;
     expect(calls).toBe(1);
+  });
+});
+
+describe("applyAgentFilter", () => {
+  const FULL = ["gemini", "claude", "codex"] as const;
+
+  test("no filter returns the roster unchanged", () => {
+    expect(applyAgentFilter(FULL, undefined)).toEqual([...FULL]);
+  });
+
+  test("/only picks just that agent", () => {
+    expect(applyAgentFilter(FULL, { kind: "only", agent: "claude" })).toEqual(["claude"]);
+    expect(applyAgentFilter(FULL, { kind: "only", agent: "gemini" })).toEqual(["gemini"]);
+    expect(applyAgentFilter(FULL, { kind: "only", agent: "codex" })).toEqual(["codex"]);
+  });
+
+  test("/skip drops that agent", () => {
+    expect(applyAgentFilter(FULL, { kind: "skip", agent: "codex" })).toEqual([
+      "gemini",
+      "claude",
+    ]);
+  });
+
+  test("/only for agent not in roster yields empty array", () => {
+    expect(
+      applyAgentFilter(["gemini", "claude"] as const, { kind: "only", agent: "codex" }),
+    ).toEqual([]);
+  });
+
+  test("returns a new array (no mutation)", () => {
+    const src = ["gemini", "claude", "codex"] as const;
+    const out = applyAgentFilter(src, undefined);
+    expect(out).not.toBe(src);
+  });
+});
+
+describe("executeTurn with agent filter", () => {
+  test("/only restricts fanOut to a single agent", async () => {
+    const receivedAgentIds: string[][] = [];
+    const output = new PassThrough();
+    const chunks: Buffer[] = [];
+    output.on("data", (c) => chunks.push(c));
+    const deps = mockExecuteTurnDeps({
+      output,
+      heartbeatIntervalMs: 0,
+      fanOut: async (params): Promise<AgentResult[]> => {
+        receivedAgentIds.push(params.agentIds ?? ["default"]);
+        return (params.agentIds ?? ["gemini", "claude", "codex"]).map((id) => ({
+          id: id as "gemini" | "claude" | "codex",
+          model: "m",
+          status: "ok" as const,
+          branch: `b-${id}`,
+          stdoutTail: "",
+          diffSummary: "",
+          diffPaths: [],
+        }));
+      },
+    });
+    await realExecuteTurn("test", null, deps, { kind: "only", agent: "claude" });
+    expect(receivedAgentIds[0]).toEqual(["claude"]);
+    expect(Buffer.concat(chunks).toString("utf8")).toContain("using only claude");
+  });
+
+  test("/skip removes one agent from fanOut", async () => {
+    const receivedAgentIds: string[][] = [];
+    const output = new PassThrough();
+    const chunks: Buffer[] = [];
+    output.on("data", (c) => chunks.push(c));
+    const deps = mockExecuteTurnDeps({
+      output,
+      heartbeatIntervalMs: 0,
+      fanOut: async (params): Promise<AgentResult[]> => {
+        receivedAgentIds.push(params.agentIds ?? ["default"]);
+        return (params.agentIds ?? ["gemini", "claude", "codex"]).map((id) => ({
+          id: id as "gemini" | "claude" | "codex",
+          model: "m",
+          status: "ok" as const,
+          branch: `b-${id}`,
+          stdoutTail: "",
+          diffSummary: "",
+          diffPaths: [],
+        }));
+      },
+    });
+    await realExecuteTurn("test", null, deps, { kind: "skip", agent: "codex" });
+    expect(receivedAgentIds[0]).toEqual(["gemini", "claude"]);
+    expect(Buffer.concat(chunks).toString("utf8")).toContain("skipping codex");
+  });
+
+  test("no filter passes undefined agentIds (fanOut uses session default)", async () => {
+    const receivedAgentIds: Array<string[] | undefined> = [];
+    const deps = mockExecuteTurnDeps({
+      heartbeatIntervalMs: 0,
+      fanOut: async (params): Promise<AgentResult[]> => {
+        receivedAgentIds.push(params.agentIds);
+        return [
+          { id: "gemini", model: "m", status: "ok", branch: "b", stdoutTail: "", diffSummary: "", diffPaths: [] },
+          { id: "claude", model: "m", status: "ok", branch: "b", stdoutTail: "", diffSummary: "", diffPaths: [] },
+          { id: "codex", model: "m", status: "ok", branch: "b", stdoutTail: "", diffSummary: "", diffPaths: [] },
+        ];
+      },
+    });
+    await realExecuteTurn("test", null, deps);
+    expect(receivedAgentIds[0]).toBeUndefined();
   });
 });
