@@ -5,7 +5,12 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { runRepl, type ReplDeps } from "./repl";
 import type { AgentResult, OrchestratorOutput } from "./orchestrator";
-import { executeTurn as realExecuteTurn, type ExecuteTurnDeps } from "./repl";
+import {
+  executeTurn as realExecuteTurn,
+  type ExecuteTurnDeps,
+  estimateHistoryBytes,
+  LONG_HISTORY_WARN_BYTES,
+} from "./repl";
 
 function mockExecuteTurnDeps(overrides: Partial<ExecuteTurnDeps> = {}): ExecuteTurnDeps {
   const dir = mkdtempSync(join(tmpdir(), "gg-exec-"));
@@ -234,5 +239,38 @@ describe("real fan-out and orchestrator factories (shape only)", () => {
       debugDir: "/repo/.gitgang/debug",
     });
     expect(typeof fn).toBe("function");
+  });
+});
+
+describe("long history warning", () => {
+  test("LONG_HISTORY_WARN_BYTES is 50KB", () => {
+    expect(LONG_HISTORY_WARN_BYTES).toBe(50 * 1024);
+  });
+
+  test("estimateHistoryBytes sums user + assistant + current", () => {
+    const size = estimateHistoryBytes(
+      [
+        { turn: 1, user: "a".repeat(100), assistant: "b".repeat(200) },
+      ],
+      "c".repeat(50),
+      {
+        intent: "ask",
+        agreement: [],
+        disagreement: [],
+        bestAnswer: "d".repeat(300),
+      },
+    );
+    expect(size).toBe(100 + 200 + 50 + 300);
+  });
+
+  test("estimateHistoryBytes handles empty history", () => {
+    expect(
+      estimateHistoryBytes([], "hi", {
+        intent: "ask",
+        agreement: [],
+        disagreement: [],
+        bestAnswer: "yo",
+      }),
+    ).toBe(4);
   });
 });

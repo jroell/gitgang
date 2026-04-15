@@ -163,6 +163,14 @@ export async function executeTurn(
 
   deps.output.write(renderSynthesis(output, { color: true }));
 
+  const historyBytes = estimateHistoryBytes(history, userMessage, output);
+  if (historyBytes > LONG_HISTORY_WARN_BYTES) {
+    const kb = Math.round(historyBytes / 1024);
+    deps.output.write(
+      `ℹ History is getting long (~${kb}k). Consider /quit and starting fresh.\n`,
+    );
+  }
+
   if (output.intent === "code" && output.mergePlan) {
     if (deps.session.metadata.automerge === "on") {
       const result = await deps.applyMerge(output.mergePlan);
@@ -213,6 +221,22 @@ function currentTurnNumber(session: LoadedSession): number {
   let max = 0;
   for (const e of session.events) if (e.turn > max) max = e.turn;
   return max;
+}
+
+export const LONG_HISTORY_WARN_BYTES = 50 * 1024;
+
+export function estimateHistoryBytes(
+  history: Array<{ turn: number; user: string; assistant: string }>,
+  currentUserMessage: string,
+  currentOrchestratorOutput: OrchestratorOutput,
+): number {
+  let bytes = Buffer.byteLength(currentUserMessage, "utf8");
+  bytes += Buffer.byteLength(currentOrchestratorOutput.bestAnswer, "utf8");
+  for (const h of history) {
+    bytes += Buffer.byteLength(h.user, "utf8");
+    bytes += Buffer.byteLength(h.assistant, "utf8");
+  }
+  return bytes;
 }
 
 // ---------------------------------------------------------------------------
