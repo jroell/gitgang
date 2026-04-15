@@ -21,7 +21,7 @@ import chalk from "chalk";
 import ora from "ora";
 import { renderSidebar } from "./sidebar.js";
 
-const VERSION = "1.6.0";
+const VERSION = "1.7.0";
 const REQUIRED_BINARIES = ["git", "gemini", "claude", "codex"] as const;
 const DEFAULT_AGENT_IDLE_TIMEOUT_MS = Number(
   process.env.GITGANG_AGENT_IDLE_TIMEOUT ?? 7 * 60 * 1000,
@@ -133,7 +133,7 @@ interface ReviewerDecision {
 }
 
 const DEFAULT_MODELS: Record<AgentId, string> = {
-  gemini: "gemini-3.1-pro",
+  gemini: "gemini-3.1-pro-preview",
   claude: "claude-opus-4-6",
   codex: "gpt-5.4",
 };
@@ -312,20 +312,63 @@ function systemConstraints(agent: AgentId) {
     : null;
   const timeLines = timeBudget
     ? [
+        "",
+        "## Time Management",
         `Time budget: You have approximately ${timeBudget} seconds total to complete this task.`,
         `Strategy: commit a minimal working solution within the first ${Math.floor(timeBudget / 3)} seconds, then improve iteratively.`,
         "A committed partial solution is far better than a perfect solution that never gets committed.",
-        "Do not spend more than half your budget exploring or planning before writing and committing real code.",
+        "Do not spend more than 20% of your budget on exploration/planning before writing and committing real code.",
+        `After ${Math.floor(timeBudget * 0.8)} seconds, stop adding features and focus on committing and verifying what you have.`,
       ]
     : [];
   return [
     "You are an autonomous senior engineer with full authorization to edit files, run shell commands, install dependencies, and run tests.",
     "Do not ask for permission. Decide and proceed.",
-    "Work in small, verifiable steps and commit early with clear messages.",
-    "Add or update tests to cover the change.",
-    "If something fails, debug and keep going until complete.",
-    "Prefer editing files with apply_patch or here-doc writes; the 'replace' tool can fail when paths include extra whitespace.",
-    "At the end, summarize what changed and any follow ups.",
+    "",
+    "## Execution Strategy",
+    "Follow this workflow: Observe → Plan → Implement → Verify → Commit",
+    "",
+    "### Phase 1: Observe (brief)",
+    "Before writing any code, spend 30-60 seconds understanding the environment:",
+    "- List the directory structure (ls, find) to understand the project layout.",
+    "- Check what languages, frameworks, and tools are available (python3 --version, node --version, gcc --version, etc.).",
+    "- Read any existing task description files (TASK.md, README.md, etc.).",
+    "- Identify existing code, tests, and configuration files relevant to the task.",
+    "- Check for a Makefile, package.json, requirements.txt, or similar build configuration.",
+    "",
+    "### Phase 2: Plan (brief)",
+    "Mentally categorize the task and choose an appropriate strategy:",
+    "- For coding tasks: identify the language, write a minimal working solution first, then refine.",
+    "- For ML/training tasks: start with a small test run (few epochs, small data) to verify the pipeline works before scaling up.",
+    "- For security/crypto tasks: ground your approach with exact commands before running destructive operations.",
+    "- For system administration tasks: check current state before modifying configuration.",
+    "- For optimization tasks: get a correct baseline first, then optimize.",
+    "",
+    "### Phase 3: Implement",
+    "- Work in small, verifiable steps.",
+    "- Commit early and often with clear messages — a committed partial solution beats an uncommitted perfect one.",
+    "- Write complete files rather than making many small edits when creating new code.",
+    "- When writing files with heredoc, ensure proper escaping and indentation.",
+    "- If a command fails, read the error carefully, fix the root cause, and retry.",
+    "- Install missing dependencies promptly (pip install, apt-get install, npm install, etc.).",
+    "",
+    "### Phase 4: Verify",
+    "- Run any existing tests or validation scripts before declaring done.",
+    "- If the task specifies expected output or behavior, verify against it.",
+    "- Check for common errors: syntax errors, import failures, missing files, wrong paths.",
+    "- If tests fail, debug and fix — do not stop at the first error.",
+    "",
+    "### Phase 5: Commit",
+    "- Ensure all changes are committed with a clear, descriptive message.",
+    "- Add or update tests to cover the change when applicable.",
+    "",
+    "## Error Recovery",
+    "- If a tool or command is not found, try installing it or finding an alternative.",
+    "- If you get stuck in a loop of the same error, step back and try a fundamentally different approach.",
+    "- If a file write produces malformed content, read the file back to verify and fix.",
+    "- If something fails, debug and keep going until complete.",
+    "- Prefer writing files with cat <<'EOF' heredocs or direct file writes; the 'replace' tool can fail when paths include extra whitespace.",
+    "At the end, summarize what changed.",
     ...timeLines,
   ].join("\n");
 }
@@ -335,16 +378,22 @@ function featurePrompt(agent: AgentId, base: string, task: string) {
 
 Base branch: ${base}
 You are in a dedicated git worktree and branch for ${agent}.
-Objectives:
-1) Implement the feature to production quality.
-2) Add or update tests.
-3) Update docs if needed.
-4) Commit early and often with clear messages.
+
+Objectives (in priority order):
+1) Produce a correct, working solution to the task. Correctness is the top priority.
+2) Commit your solution so it is captured in git history.
+3) Verify your solution works by running any available tests, scripts, or validation.
+4) Add or update tests if appropriate.
 5) Ensure the project builds and tests pass.
+
 Rules:
 - You have full authorization to modify files and run commands in this workspace.
 - Do not prompt for confirmation.
-- If blocked, propose a plan, then execute it.
+- Start by observing the workspace: list files, read task descriptions, check available tools.
+- If the task references specific files, read them before modifying.
+- If blocked, try a different approach rather than repeating the same failing strategy.
+- When creating files, write the complete file content rather than patching incrementally.
+- Always commit your work. An imperfect committed solution is better than no committed solution.
 - Keep going until done.`;
 }
 
@@ -626,6 +675,13 @@ async function runClaude(
     "--verbose",
   ];
   if (yolo) args.push("--dangerously-skip-permissions");
+  // When running under a time budget, set --max-turns to prevent the agent from
+  // spinning indefinitely. Empirically, most tasks complete in under 100 turns;
+  // 200 is a generous ceiling that still prevents runaway loops.
+  const maxTurns = process.env.GITGANG_MAX_TURNS
+    ? parseInt(process.env.GITGANG_MAX_TURNS, 10)
+    : (process.env.GITGANG_TIME_BUDGET_SECONDS ? 200 : 0);
+  if (maxTurns > 0) args.push("--max-turns", String(maxTurns));
   // Wrap in bash to pipe prompt file to claude to avoid shell escaping issues
   // If a time budget is set, wrap with `timeout` so the agent exits gracefully
   // before an external deadline (e.g. benchmark harness) kills the container.

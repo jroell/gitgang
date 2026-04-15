@@ -154,7 +154,7 @@ describe("generateRunReport", () => {
 
     const report = generateRunReport(opts, agentResults, agents as any, "approved", Date.now());
 
-    expect(report.models.gemini).toBe("gemini-3.1-pro");
+    expect(report.models.gemini).toBe("gemini-3.1-pro-preview");
     expect(report.models.claude).toBe("claude-opus-4-6");
     expect(report.models.codex).toBe("gpt-5.4");
 

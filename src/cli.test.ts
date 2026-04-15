@@ -286,7 +286,7 @@ describe("Model configuration", () => {
   });
 
   test("DEFAULT_MODELS contains expected default values", () => {
-    expect(DEFAULT_MODELS.gemini).toBe("gemini-3.1-pro");
+    expect(DEFAULT_MODELS.gemini).toBe("gemini-3.1-pro-preview");
     expect(DEFAULT_MODELS.claude).toBe("claude-opus-4-6");
     expect(DEFAULT_MODELS.codex).toBe("gpt-5.4");
   });

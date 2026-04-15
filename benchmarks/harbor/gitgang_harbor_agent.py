@@ -152,11 +152,14 @@ class GitgangAgent(BaseInstalledAgent):
             "IS_SANDBOX": "1",
             "FORCE_AUTO_BACKGROUND_TASKS": "1",
             "ENABLE_BACKGROUND_TASKS": "1",
-            # Idle timeout for claude inside gitgang (ms)
+            # Idle timeout for claude inside gitgang (ms) — generous to allow
+            # long-running commands (model training, compilation, etc.)
             "GITGANG_AGENT_IDLE_TIMEOUT": "600000",
             # Time budget passed into gitgang so it can inform the agent and
             # enforce a subprocess timeout before harbor's hard kill.
             "GITGANG_TIME_BUDGET_SECONDS": str(time_budget_sec),
+            # Disable interactive prompts/confirmations inside claude
+            "DISABLE_PROMPT": "1",
         }
         env = {k: v for k, v in env.items() if v}
 
