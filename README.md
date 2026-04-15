@@ -2,22 +2,21 @@
 
 > The gang's all here to code — Multi-agent AI orchestration for autonomous software development
 
-**GitGang** is a Node-based CLI (bundled with esbuild) that coordinates multiple AI agents (Gemini, Claude, and Codex) to collaboratively solve complex coding tasks. In git repos, agents work in isolated git worktrees and a reviewer agent merges the best solutions. Outside git repos, interactive mode falls back to read-only Q&A.
+**GitGang** is a CLI that coordinates multiple AI coding agents to collaboratively solve complex tasks. It runs in three modes: **Pair Mode** for autonomous AI pair programming, **Interactive Mode** for multi-agent Q&A and code synthesis, and **One-Shot Mode** for fire-and-forget parallel execution with automatic merge.
 
 [![npm version](https://img.shields.io/npm/v/gitgang.svg)](https://www.npmjs.com/package/gitgang)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## ✨ Features
 
-- **Multi-Agent Collaboration**: Runs three AI agents in parallel (Gemini, Claude, Codex)
-- **Real-Time Dashboard**: Live-updating progress display showing file changes, commits, and agent status
-- **Beautiful Dracula UI**: Modern terminal interface with RGB colors, rounded corners, and live spinners
-- **Git Worktree Isolation**: Each agent works in its own git worktree and branch
-- **Intelligent Review Loop**: Codex reviewer analyzes all solutions and merges the best parts
-- **Interactive Command Palette**: Monitor and control agents in real-time
-- **Autonomous Execution**: In git-backed code flows, agents work independently with full permissions (optional yolo mode)
-- **Non-Git Q&A Mode**: Run `gg -i` from any directory — agents answer questions in read-only mode even outside git repos
-- **Single-File Bundle**: Lightweight Node CLI built with esbuild (no Bun required)
+- **AI Pair Programming** (`gg pair`): One agent codes while another reviews in real-time — they discuss disagreements autonomously and course-correct without human intervention
+- **Multi-Agent Collaboration** (`gg -i`): Three agents (Gemini, Claude, Codex) solve tasks in parallel with orchestrated synthesis
+- **Premium Terminal UI**: Dracula-themed interface with colored tool call panels, edit diffs, insight boxes, spinners, and a live status bar
+- **Autonomous Operation**: Agents work independently — pair mode runs fully unattended with a session summary at the end
+- **Git Worktree Isolation**: Each agent works in its own branch (multi-agent mode)
+- **Extensible Architecture**: Agent backend interface designed for adding new CLI tools (ForgeCode, Hermes/OpenRouter, etc.)
+- **Non-Git Q&A Mode**: Run from any directory — agents answer questions in read-only mode
+- **Single-File Bundle**: Lightweight Node CLI built with esbuild
 
 ## 📦 Installation
 
@@ -27,55 +26,82 @@ npm i -g gitgang@latest
 
 ### Prerequisites
 
-You need the following CLI tools installed and configured:
+GitGang works with these AI CLI tools. Install the ones you plan to use:
 
-- **[Gemini CLI](https://github.com/google/generative-ai-sdk)** - Google's Gemini 2.5 Pro model
-- **[Claude Code CLI](https://docs.anthropic.com/claude/docs/claude-cli)** - Anthropic's Claude Sonnet 4.5
-- **[Codex CLI](https://github.com/codex-ai/codex-cli)** - OpenAI's GPT-5 Codex with high reasoning
+| CLI | Model | Required For |
+|-----|-------|-------------|
+| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | Claude Opus 4 | Pair mode, interactive mode |
+| [Codex CLI](https://github.com/openai/codex) | GPT-5.4 | Pair mode, interactive mode |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Gemini 2.5 Pro | Interactive mode |
 
-All three CLIs must be available on your `PATH`.
+- **Pair mode** requires at least 2 of: `claude`, `codex`
+- **Interactive mode** requires all 3: `gemini`, `claude`, `codex`
+- All CLIs must be available on your `PATH`
 
-## 🚀 Usage
+## 🤝 Pair Mode — AI Pair Programming
 
-### Basic Usage
-
-```bash
-gg "Add user authentication with JWT tokens"
-# or
-gitgang "Add user authentication with JWT tokens"
-```
-
-### Advanced Options
+Pair mode is the flagship feature. One agent codes while another acts as a real-time reviewer — like having a senior engineer watching over your shoulder, catching mistakes before they compound.
 
 ```bash
-gitgang --task "Refactor API layer" \
-  --rounds 5 \
-  --no-yolo \
-  --workRoot .agents \
-  --timeoutMs 3600000 \
-  --no-pr
+gg pair --coder claude --reviewer codex "implement JWT authentication middleware"
 ```
 
-### Options
+### How It Works
+
+1. **The coder works normally** — writes code, reads files, runs tests, exactly as it would in a solo session
+2. **The reviewer monitors in parallel** — periodically checks the coder's output without interrupting it
+3. **If the reviewer spots a problem** — it suspends the coder (SIGTSTP), and the two agents have an autonomous conversation to discuss the concern
+4. **They talk it out** — the coder explains its reasoning, the reviewer pushes back or agrees, they go back and forth until they're aligned
+5. **The coder resumes** — with the full conversation context, incorporating any agreed-upon changes
+6. **Final review** — when the coder finishes, the reviewer does a thorough check of the completed work
+7. **Session summary** — a concise report of what changed, decisions made, disagreements resolved, and follow-up items
+
+### Pair Mode Options
+
+```bash
+gg pair --coder claude --reviewer codex "your task"
+gg pair --coder codex --reviewer claude "fix the N+1 query in users endpoint"
+gg pair --coder claude --reviewer claude "refactor auth module" --review-interval 30s
+```
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--task` | Task description for agents | First positional arg |
-| `--rounds` | Number of review rounds | `3` |
+| `--coder` | Agent that writes code (`claude` or `codex`) | **required** |
+| `--reviewer` | Agent that reviews (`claude` or `codex`) | **required** |
+| `--review-interval` | How often the reviewer checks | `45s` |
+| `--max-interventions` | Max reviewer pause cycles before forcing completion | `5` |
+| `--timeout` | Total session timeout | `30m` |
 | `--yolo` / `--no-yolo` | Auto-approve agent actions | `true` |
-| `--workRoot` | Directory for git worktrees | `.ai-worktrees` |
-| `--timeoutMs` | Max runtime in milliseconds | `1500000` (25m) |
-| `--no-pr` | Skip GitHub PR creation | Creates PR by default |
 
-## Interactive Mode
+### What You See
+
+Pair mode streams the coder's full activity to your terminal with a premium TUI:
+
+- **Tool calls** with colored header bars — Read (cyan), Edit (orange with red/green diff), Write (green), Bash (yellow)
+- **Thinking** in dim italic with left borders
+- **Insight blocks** in purple rounded boxes
+- **File contents** and **command output** with bordered panels
+- **Reviewer conversations** displayed in styled discussion boxes when they occur
+- **Live status bar** at the bottom showing phase, round, elapsed time
+
+### When to Use Pair Mode
+
+- Complex refactors where direction matters early
+- Tasks where you'd normally review halfway through
+- Working in unfamiliar codebases where a second opinion prevents wrong turns
+- When you want to walk away and let agents handle the full cycle autonomously
+
+## 🔄 Interactive Mode
 
 Start a conversational session with all three agents:
 
-    gg              # enters interactive mode (no task)
-    gg -i           # same
-    gg -i "how does auth work"   # pre-loads first turn
+```bash
+gg              # enters interactive mode (no task)
+gg -i           # same
+gg -i "how does auth work"   # pre-loads first turn
+```
 
-In git repos, every turn sends your message to gemini, claude, and codex in parallel worktrees. Outside git repos, interactive mode runs the same agents against your current directory in read-only Q&A mode. A Claude Code orchestrator then inspects the responses, browses the code to verify claims, and synthesizes an answer with:
+Every turn sends your message to gemini, claude, and codex in parallel worktrees. A Claude Code orchestrator inspects the responses, browses the code to verify claims, and synthesizes an answer with:
 
 - Points of agreement across agents
 - Points of disagreement with the orchestrator's verdict and code citations
@@ -85,11 +111,9 @@ For questions, the turn ends with the synthesis. For code changes, the orchestra
 
 ### Non-Git Q&A Mode
 
-You can also run `gg -i` from **any directory**, even outside a git repo. GitGang enters a read-only Q&A mode where agents can read files in your working directory (via Read, Grep, Glob, `ls`, `cat`, `git log`) but cannot edit files, create commits, or run mutating commands. No worktrees are created. Slash commands like `/merge` and `/pr` will prompt you to run `git init` for full code-change flow.
+Run `gg -i` from **any directory**, even outside a git repo. Agents answer questions in read-only mode — no file mutations, no worktrees.
 
-Sessions in non-git mode are stored globally at `~/.gitgang/sessions/` instead of the per-repo `.gitgang/sessions/` directory.
-
-**Slash commands inside a session:**
+### Slash Commands
 
     /ask <msg>     force question mode
     /code <msg>    force code mode
@@ -97,7 +121,7 @@ Sessions in non-git mode are stored globally at `~/.gitgang/sessions/` instead o
     /pr            open a PR for the last merge
     /diff [agent]  show diff vs base for picked or named agent's branch
     /redo          re-run the last user message as a fresh turn
-    /only <agent> <msg>  run this single turn with only one agent (gemini|claude|codex)
+    /only <agent> <msg>  run this single turn with only one agent
     /skip <agent> <msg>  run this single turn skipping one agent
     /clear         forget conversation so far (log stays on disk)
     /history       print the transcript
@@ -106,183 +130,142 @@ Sessions in non-git mode are stored globally at `~/.gitgang/sessions/` instead o
     /help          list commands
     /quit          exit
 
-**Session management:**
+## 🚀 One-Shot Mode
 
-    gg doctor                             # environment health check (binaries, env vars, git)
-    gg doctor --json                      # machine-readable health check (for CI)
-    gg sessions list --json               # JSON list of sessions (pipe to jq)
-    gg sessions stats <id> --json         # JSON stats object
-    gg completions bash|zsh|fish          # emit shell completion script (eval in your rc file)
-    gg init                               # scaffold .gitgang/config.json with per-repo defaults
-    gg init --force                       # overwrite an existing config.json
-    gg sessions list                      # list recent sessions (with topic)
-    gg sessions search <query>            # find sessions matching text (topic/answer)
-    gg sessions stats <id>                # show turn/agent/merge counts + duration for a session
-    gg sessions delete <id> --yes         # remove a single session from disk
-    gg sessions prune --older-than 30d    # dry-run list sessions older than duration
-    gg sessions prune --older-than 30d -y # actually delete them
-    gg sessions show <id>                 # print a past session's transcript
-    gg sessions export <id>               # export full markdown transcript to stdout
-    gg sessions export <id> --output PATH # write export to a file
-    gg -i --resume                        # resume most-recent session
-    gg -i --resume <id>                   # resume a specific session
+Fire-and-forget: give a task, all three agents work in parallel, reviewer merges the best solution.
 
-Sessions live under `.gitgang/sessions/<id>/` (auto-added to `.gitignore` on install). Outside a git repo, sessions are stored at `~/.gitgang/sessions/`.
+```bash
+gg "Add user authentication with JWT tokens"
+```
 
-## 🎮 Interactive Commands
+### One-Shot Options
 
-While agents are running, use these slash commands:
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--task` | Task description for agents | First positional arg |
+| `--rounds` | Number of review rounds | `3` |
+| `--yolo` / `--no-yolo` | Auto-approve agent actions | `true` |
+| `--workRoot` | Directory for git worktrees | `.ai-worktrees` |
+| `--timeout` | Max runtime (e.g. `25m`, `1h`) | `25m` |
+| `--no-pr` | Skip GitHub PR creation | Creates PR by default |
+| `--agents` | Comma-separated agent list | `gemini,claude,codex` |
+| `--reviewer` | Which agent reviews | `codex` |
+| `--solo <agent>` | Run with only one agent | All three |
 
-| Command | Description |
-|---------|-------------|
-| `/status` | Show agent status and branches |
-| `/agents` | List all active agents and their worktrees (if any) |
-| `/logs <agent>` | View logs for gemini, claude, or codex |
-| `/nudge <agent> <msg>` | Send message to specific agent |
-| `/kill <agent>` | Terminate a running agent |
-| `/review` | Trigger reviewer manually |
-| `/help` | Show available commands |
+## 📂 Session Management
+
+```bash
+gg doctor                             # environment health check
+gg doctor --json                      # machine-readable (for CI)
+gg init                               # scaffold .gitgang/config.json
+gg sessions list                      # list recent sessions
+gg sessions show <id>                 # print transcript
+gg sessions stats <id>                # turn/agent/merge counts
+gg sessions search <query>            # find sessions matching text
+gg sessions export <id>               # export markdown transcript
+gg sessions delete <id> --yes         # remove a session
+gg sessions prune --older-than 30d -y # delete old sessions
+gg -i --resume                        # resume most-recent session
+gg -i --resume <id>                   # resume a specific session
+gg completions bash|zsh|fish          # shell completion script
+```
+
+Sessions live under `.gitgang/sessions/<id>/`. Outside a git repo, sessions are stored at `~/.gitgang/sessions/`.
 
 ## 🏗️ How It Works
 
-The full flow below describes git-backed code-change runs. In non-git interactive mode, GitGang skips worktree, diff, merge, and PR steps and stays read-only.
+### Pair Mode Architecture
 
-1. **Initialization**: In git repos, creates three git worktrees from your current branch. Outside git repos, interactive mode skips worktree creation and stays read-only
-2. **Parallel Execution**: Launches Gemini, Claude, and Codex simultaneously with live spinners
-3. **Real-Time Monitoring**: Dashboard updates every 2 seconds showing:
-   - Agent status (pending, working, complete)
-   - Files changed, added, and deleted in each worktree
-   - Commit counts per agent
-   - Current activity (thinking, running commands, editing files)
-   - Reviewer status (distinct from regular agents)
-   - Elapsed session time
-4. **Autonomous Development**: Each agent:
-   - Implements the feature independently
-   - Writes/updates tests
-   - Commits changes incrementally
-   - Handles failures autonomously
-5. **Review Loop**: Codex reviewer:
-   - Compares all three solutions
-   - Either approves and merges best parts
-   - Or provides targeted revision feedback
+```
+┌──────────────────────────────────────────────────────────────┐
+│  CODER runs naturally, streaming output to terminal          │
+│  REVIEWER checks periodically in parallel (coder undisturbed)│
+│                                                              │
+│  CONTINUE → coder keeps running (zero overhead)              │
+│  PAUSE →                                                     │
+│    1. SIGTSTP suspends coder (memory preserved)              │
+│    2. Reviewer sends concern → coder responds                │
+│    3. Autonomous conversation until agreement                │
+│    4. Coder resumes via --resume with full context            │
+│                                                              │
+│  When coder finishes → final review pass                     │
+│  COMPLETE → session summary for the human                    │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### Multi-Agent Mode Architecture
+
+1. **Initialization**: Creates three git worktrees from your current branch
+2. **Parallel Execution**: Launches Gemini, Claude, and Codex simultaneously
+3. **Real-Time Dashboard**: Live status updates for each agent
+4. **Autonomous Development**: Each agent implements independently
+5. **Review Loop**: Reviewer compares solutions and merges the best parts
 6. **Integration**: Creates merge branch with best solution
 7. **PR Creation**: Optionally opens GitHub PR (requires `gh` CLI)
 
+## ⚙️ Configuration
+
+Per-repo configuration via `.gitgang/config.json`:
+
+```bash
+gg init  # creates the config file
+```
+
+```json
+{
+  "automerge": "ask",
+  "reviewer": "codex",
+  "timeoutMs": 1500000,
+  "heartbeatIntervalMs": 30000,
+  "models": {
+    "gemini": "gemini-2.5-pro",
+    "claude": "claude-opus-4-6",
+    "codex": "gpt-5.4"
+  }
+}
+```
+
+Priority: CLI flags > env vars > config.json > built-in defaults.
+
+Model overrides via environment variables: `GITGANG_GEMINI_MODEL`, `GITGANG_CLAUDE_MODEL`, `GITGANG_CODEX_MODEL`.
+
 ## 📋 Requirements
 
-- **macOS** (tested; should work anywhere with git and Node)
-- **Git** repository with clean working tree (required for one-shot and code-change modes; interactive Q&A works without git)
-- **Node.js 18+** / **npm** for installation
-- **AI CLI Tools**: gemini, claude, codex
-- **Terminal**: RGB color support recommended (iTerm2, Terminal.app, Hyper, etc.)
-  - Gracefully falls back to basic ANSI colors in unsupported terminals
+- **Node.js 18+** / **npm**
+- **Git** (required for one-shot and code-change modes; interactive Q&A works without git)
+- **AI CLI Tools**: `claude` + `codex` for pair mode; all three for interactive mode
+- **Terminal**: RGB color support recommended (iTerm2, Ghostty, Warp, Hyper, etc.)
+- **macOS** (tested; should work on Linux with the same CLIs installed)
 
 ## 🛠️ Development
 
-### Building from Source
-
 ```bash
-# Clone the repo
 git clone https://github.com/jroell/gitgang.git
 cd gitgang
-
-# Install deps
 npm install
-
-# Run locally
 npm run build
-node dist/cli.js "Test task"
+node dist/cli.js pair --coder claude --reviewer codex "test task"
 ```
-
-### Sidebar Demo
-
-Render the polished sidebar without wiring the full CLI:
-
-```ts
-import { renderHelloWorldSidebar } from "./src/sidebar.ts";
-
-console.log(renderHelloWorldSidebar());
-```
-
-### Publishing
 
 ```bash
-# Set your npm token
-export NPM_TOKEN='your_npm_token_here'
-
-# Run publish script
-./release.sh
+npm test  # run test suite
 ```
 
 ## 🎯 Use Cases
 
-- **Feature Development**: Implement complex features with multiple perspectives
-- **Refactoring**: Get different approaches to code restructuring
-- **Bug Fixes**: Multiple agents tackle the same bug differently
-- **Code Reviews**: Compare solutions before committing
-- **Experimentation**: Try different implementation strategies simultaneously
+| Mode | Best For |
+|------|----------|
+| `gg pair` | Complex features, refactors, unfamiliar codebases — when early feedback prevents wasted work |
+| `gg -i` | Exploration, Q&A, comparing approaches, interactive code changes |
+| `gg "task"` | Simple, well-defined tasks — fire and forget |
 
 ## ⚠️ Important Notes
 
-- One-shot and code-change modes require a **clean git working tree** (commit or stash changes first). Interactive Q&A mode (`gg -i`) works outside git repos in read-only mode
-- In git-backed code-change flows, agents have **full authorization** to modify files and run commands in yolo mode. Outside git repos, interactive Q&A mode is read-only
-- Each agent works in **isolated git worktrees** to prevent conflicts
-- The reviewer creates a **new merge branch** for the final solution
-- Worktrees are **automatically cleaned up** after completion
-- **Real-time dashboard** updates every 2 seconds with live git status monitoring
-- **Terminal colors** auto-detected; works in basic ANSI mode if RGB not supported
-- **Reviewer agent** shown separately with distinct visual styling (pink badge)
-
-## 📝 Example Session
-
-```bash
-$ gitgang "Add Redis caching layer to API"
-
-╭─────────────────────────────────────────────────────────────────────────────────╮
-│ 🤘 GitGang - The gang's all here to code!                                      │
-╰─────────────────────────────────────────────────────────────────────────────────╯
-
-Repository: /Users/you/project
-Base branch: main
-Task: Add Redis caching layer to API
-Rounds: 3  Auto-merge: true
-Type /help for interactive commands while agents run.
-
-╭─────────────────────────────────────────────────────────────────────────────────╮
-│ 🚀 Starting AI Agents                                                           │
-╰─────────────────────────────────────────────────────────────────────────────────╯
-
- GEMINI  → agents/gemini/20251104-010930-a4f2b1
- CLAUDE  → agents/claude/20251104-010930-c8e3d2
- CODEX   → agents/codex/20251104-010930-f9a1e5
-
-╭─────────────────────────────────────────────────────────────────────────────────╮
-│ 📊 Agent Dashboard                              Round 1  ⏱️  3:24               │
-├─────────────────────────────────────────────────────────────────────────────────┤
-│ ● GEMINI   ✓ Complete    Files: +3 ~2 -0    Commits: 4                         │
-│   Implemented Redis client with connection pooling                              │
-│                                                                                  │
-│ ● CLAUDE   ● Working     Files: +2 ~1 -0    Commits: 3                         │
-│   Adding cache layer to API endpoints...                                        │
-│                                                                                  │
-│ ○ CODEX    ○ Pending     Files: +0 ~0 -0    Commits: 0                         │
-│   Waiting to start...                                                           │
-├─────────────────────────────────────────────────────────────────────────────────┤
-│ REVIEWER   ● Reviewing                                                          │
-│   Comparing all solutions...                                                    │
-╰─────────────────────────────────────────────────────────────────────────────────╯
-
-╭─────────────────────────────────────────────────────────────────────────────────╮
-│ ✓ Reviewer Approved                                                             │
-╰─────────────────────────────────────────────────────────────────────────────────╯
-
-Merge branch ready: ai-merge-20251104-011245
-PR created: https://github.com/you/project/pull/123
-
-╭─────────────────────────────────────────────────────────────────────────────────╮
-│ ✨ All done!                                                                    │
-╰─────────────────────────────────────────────────────────────────────────────────╯
-```
+- Pair mode is **fully autonomous** — the human reviews the session summary at the end
+- One-shot mode requires a **clean git working tree** (commit or stash first)
+- In yolo mode, agents have **full authorization** to modify files and run commands
+- Always review changes before merging to production
+- Use `--no-yolo` for safer, permission-gated operation
 
 ## 🤝 Contributing
 
@@ -301,7 +284,3 @@ MIT License - see [LICENSE](LICENSE) file for details
 - [npm Package](https://www.npmjs.com/package/gitgang)
 - [GitHub Repository](https://github.com/jroell/gitgang)
 - [Issue Tracker](https://github.com/jroell/gitgang/issues)
-
----
-
-**Note**: This tool gives AI agents significant autonomy over your codebase. Always review changes before merging to production. Use `--no-yolo` mode for safer, interactive operation.
