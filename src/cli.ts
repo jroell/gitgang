@@ -2246,6 +2246,18 @@ Usage
   gitgang --task "Do this task" [--rounds N] [--no-yolo] [--workRoot PATH] [--timeout 25m] [--no-pr] [--dry-run] [--agents gemini,claude,codex] [--reviewer codex] [--check "npm test"]
   gitgang --solo claude "Do this task"
 
+Interactive Mode (new in v1.7.0)
+  gg                                Start interactive REPL (no task)
+  gg -i                             Same as above
+  gg -i "opener"                    Pre-load first turn
+  gg -i --automerge on|off|ask      Session-default merge behavior (default: ask)
+  gg -i --resume                    Resume most-recent session
+  gg -i --resume <id>               Resume specific session
+
+Sessions
+  gg sessions list                  List recent sessions
+  gg sessions show <id>             Print a session transcript
+
 Defaults
   rounds=3, yolo=true, workRoot=.ai-worktrees, timeout=25m, agents=gemini,claude,codex, reviewer=codex
 
