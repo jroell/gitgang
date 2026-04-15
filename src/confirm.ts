@@ -7,6 +7,7 @@ export async function promptMergeConfirm(
   output: NodeJS.WritableStream,
 ): Promise<MergeChoice> {
   const rl = createInterface({ input, output, terminal: false });
+  output.write("Merge this? [y/N/e] ");
 
   for await (const line of rl) {
     const answer = line.trim().toLowerCase();

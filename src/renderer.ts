@@ -59,8 +59,6 @@ export function renderSynthesis(
       lines.push(`  Follow-ups:`);
       for (const f of output.mergePlan.followups) lines.push(`    • ${f}`);
     }
-    lines.push("");
-    lines.push(paint("  Merge this? [y/N/e]", ANSI.bold, c));
   }
 
   if (trivial) {

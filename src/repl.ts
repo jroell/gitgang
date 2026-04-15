@@ -200,8 +200,10 @@ export async function executeTurn(
         });
         deps.output.write("Declined. Branches retained.\n");
       }
+    } else {
+      // automerge === "off" → no prompt, no apply, but tell the user
+      deps.output.write("Branches retained. Use /merge to apply the plan.\n");
     }
-    // automerge === "off" → no prompt, no apply
   }
 
   await deps.cleanupWorktrees(turn);
