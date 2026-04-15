@@ -87,10 +87,12 @@ gg "Add user authentication with JWT"
 ## Troubleshooting
 
 ### "Not in a git repository"
-Make sure you're in a git project:
+For code-change workflows, make sure you're in a git project:
 ```bash
 git status  # Should work
 ```
+
+If you just want read-only Q&A, `gg -i` can now run outside a git repo.
 
 ### "Working tree not clean"
 Commit or stash changes first:
