@@ -44,6 +44,8 @@ import {
   findLastUserMessage,
   parseDurationMs,
   selectSessionsToPrune,
+  searchSessionEvents,
+  readEvents,
   formatSessionExport,
   type LoadedSession,
   type SessionEvent,
@@ -957,6 +959,27 @@ function parseArgs(raw: string[]) {
         subcommand: { kind: "sessions_delete", id: raw[2], confirmed },
       } as unknown as ParsedArgs;
     }
+    if (raw[1] === "search" && raw[2]) {
+      // Walk tokens after "search" once: extract --limit/-n value, collect
+      // every other non-flag token as the query.
+      let limit = 10;
+      const queryParts: string[] = [];
+      for (let j = 2; j < raw.length; j++) {
+        const tok = raw[j];
+        if ((tok === "--limit" || tok === "-n") && raw[j + 1]) {
+          const parsed = Number(raw[j + 1]);
+          if (Number.isFinite(parsed) && parsed > 0) limit = Math.floor(parsed);
+          j++; // consume the value too
+          continue;
+        }
+        if (tok.startsWith("-")) continue; // unknown flag, skip
+        queryParts.push(tok);
+      }
+      const query = queryParts.join(" ");
+      return {
+        subcommand: { kind: "sessions_search", query, limit },
+      } as unknown as ParsedArgs;
+    }
     if (raw[1] === "prune") {
       let olderThan: string | undefined;
       let confirmed = false;
@@ -979,7 +1002,13 @@ function parseArgs(raw: string[]) {
       } as unknown as ParsedArgs;
     }
     throw new Error(
-      "usage: gg sessions list | gg sessions show <id> | gg sessions export <id> [--output PATH] | gg sessions delete <id> --yes | gg sessions prune --older-than <duration> [--yes]",
+      "usage:\n" +
+        "  gg sessions list\n" +
+        "  gg sessions show <id>\n" +
+        "  gg sessions export <id> [--output PATH]\n" +
+        "  gg sessions delete <id> --yes\n" +
+        "  gg sessions prune --older-than <duration> [--yes]\n" +
+        "  gg sessions search <query> [--limit N]",
     );
   }
 
@@ -1154,7 +1183,8 @@ interface ParsedArgs {
     | { kind: "sessions_show"; id: string }
     | { kind: "sessions_export"; id: string; outputPath?: string }
     | { kind: "sessions_delete"; id: string; confirmed: boolean }
-    | { kind: "sessions_prune"; olderThan: string; confirmed: boolean };
+    | { kind: "sessions_prune"; olderThan: string; confirmed: boolean }
+    | { kind: "sessions_search"; query: string; limit: number };
 }
 
 export function normalizeParsedArgs(parsed: ParsedArgs): ParsedArgs {
@@ -2624,6 +2654,9 @@ export async function dispatchMain(parsed: ParsedArgs): Promise<number> {
   if (parsed.subcommand?.kind === "sessions_prune") {
     return runSessionsPrune(parsed.subcommand.olderThan, parsed.subcommand.confirmed);
   }
+  if (parsed.subcommand?.kind === "sessions_search") {
+    return runSessionsSearch(parsed.subcommand.query, parsed.subcommand.limit);
+  }
   if (parsed.interactive) {
     return runInteractive(parsed);
   }
@@ -3029,6 +3062,50 @@ function runSessionsDelete(id: string, confirmed: boolean): number {
   }
   rmSync(dir, { recursive: true, force: true });
   process.stdout.write(`Deleted session ${id}.\n`);
+  return 0;
+}
+
+function runSessionsSearch(query: string, limit: number): number {
+  if (!query.trim()) {
+    process.stderr.write("Empty search query.\nusage: gg sessions search <query> [--limit N]\n");
+    return 1;
+  }
+  const root = resolve(".gitgang", "sessions");
+  if (!existsSync(root)) {
+    process.stdout.write("No sessions to search.\n");
+    return 0;
+  }
+  const sessionDirs = readdirSync(root)
+    .filter((name) => existsSync(join(root, name, "metadata.json")))
+    .map((name) => {
+      const meta = JSON.parse(readFileSync(join(root, name, "metadata.json"), "utf8"));
+      return { name, startedAt: meta.startedAt as string };
+    })
+    .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+
+  let totalMatches = 0;
+  let sessionsWithHits = 0;
+  for (const { name } of sessionDirs) {
+    if (sessionsWithHits >= limit) break;
+    const events = readEvents(join(root, name, "session.jsonl"));
+    const hits = searchSessionEvents(events, query, 5);
+    if (hits.length === 0) continue;
+    sessionsWithHits++;
+    process.stdout.write(`\n${name}\n`);
+    for (const hit of hits) {
+      const tag = hit.source === "user" ? "you" : "gitgang";
+      process.stdout.write(`  [turn ${hit.turn} ${tag}] ${hit.snippet}\n`);
+      totalMatches++;
+    }
+  }
+  if (sessionsWithHits === 0) {
+    process.stdout.write(`No matches for "${query}" in ${sessionDirs.length} session(s).\n`);
+  } else {
+    process.stdout.write(
+      `\n${totalMatches} match${totalMatches === 1 ? "" : "es"} across ${sessionsWithHits} session${sessionsWithHits === 1 ? "" : "s"}` +
+        (sessionDirs.length > sessionsWithHits ? ` (${sessionDirs.length} total scanned).\n` : ".\n"),
+    );
+  }
   return 0;
 }
 

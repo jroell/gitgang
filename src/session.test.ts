@@ -1006,3 +1006,129 @@ describe("selectSessionsToPrune", () => {
     expect(selectSessionsToPrune([], 86_400_000, NOW)).toEqual([]);
   });
 });
+
+import { searchSessionEvents } from "./session";
+
+describe("searchSessionEvents", () => {
+  test("returns empty for empty query", () => {
+    expect(
+      searchSessionEvents(
+        [{ ts: "t", turn: 1, type: "user", text: "hello", forcedMode: null }],
+        "",
+      ),
+    ).toEqual([]);
+  });
+
+  test("returns empty when no matches", () => {
+    expect(
+      searchSessionEvents(
+        [{ ts: "t", turn: 1, type: "user", text: "hello world", forcedMode: null }],
+        "xyz",
+      ),
+    ).toEqual([]);
+  });
+
+  test("matches user messages case-insensitively", () => {
+    const hits = searchSessionEvents(
+      [
+        { ts: "t", turn: 1, type: "user", text: "How does AUTH work?", forcedMode: null },
+      ],
+      "auth",
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0].turn).toBe(1);
+    expect(hits[0].source).toBe("user");
+    expect(hits[0].snippet).toContain("AUTH");
+  });
+
+  test("matches orchestrator bestAnswer", () => {
+    const hits = searchSessionEvents(
+      [
+        {
+          ts: "t",
+          turn: 1,
+          type: "orchestrator",
+          payload: {
+            intent: "ask",
+            agreement: [],
+            disagreement: [],
+            bestAnswer: "Auth uses passport.js with sessions.",
+          },
+        },
+      ],
+      "passport",
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0].source).toBe("assistant");
+    expect(hits[0].snippet).toContain("passport");
+  });
+
+  test("snippet centered on match with ellipses", () => {
+    const long = "a".repeat(200) + " NEEDLE " + "b".repeat(200);
+    const hits = searchSessionEvents(
+      [{ ts: "t", turn: 1, type: "user", text: long, forcedMode: null }],
+      "NEEDLE",
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0].snippet).toContain("NEEDLE");
+    expect(hits[0].snippet.startsWith("…")).toBe(true);
+    expect(hits[0].snippet.endsWith("…")).toBe(true);
+  });
+
+  test("collapses whitespace in snippet so it stays on one line", () => {
+    const hits = searchSessionEvents(
+      [
+        {
+          ts: "t",
+          turn: 1,
+          type: "user",
+          text: "before\n\nthe match here\n\nafter",
+          forcedMode: null,
+        },
+      ],
+      "match",
+    );
+    expect(hits[0].snippet).not.toContain("\n");
+  });
+
+  test("respects maxHits limit", () => {
+    const events: SessionEvent[] = [];
+    for (let i = 1; i <= 10; i++) {
+      events.push({ ts: "t", turn: i, type: "user", text: `match number ${i}`, forcedMode: null });
+    }
+    const hits = searchSessionEvents(events, "match", 3);
+    expect(hits).toHaveLength(3);
+    expect(hits[0].turn).toBe(1);
+    expect(hits[2].turn).toBe(3);
+  });
+
+  test("ignores agent_start, agent_end, merge events", () => {
+    const events: SessionEvent[] = [
+      { ts: "t", turn: 1, type: "agent_start", agent: "gemini", branch: "match-branch" },
+      { ts: "t", turn: 1, type: "agent_end", agent: "gemini", status: "ok", diffSummary: "match" },
+      { ts: "t", turn: 1, type: "merge", branch: "match-branch", outcome: "merged" },
+    ];
+    expect(searchSessionEvents(events, "match")).toEqual([]);
+  });
+
+  test("returns matches for both user and assistant on same turn", () => {
+    const events: SessionEvent[] = [
+      { ts: "t", turn: 1, type: "user", text: "is auth right?", forcedMode: null },
+      {
+        ts: "t",
+        turn: 1,
+        type: "orchestrator",
+        payload: {
+          intent: "ask",
+          agreement: [],
+          disagreement: [],
+          bestAnswer: "yes auth works",
+        },
+      },
+    ];
+    const hits = searchSessionEvents(events, "auth");
+    expect(hits).toHaveLength(2);
+    expect(hits[0].source).toBe("user");
+    expect(hits[1].source).toBe("assistant");
+  });
+});

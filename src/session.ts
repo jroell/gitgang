@@ -577,3 +577,64 @@ export function selectSessionsToPrune(
   matches.sort((a, b) => a.t - b.t);
   return matches.map((m) => m.id);
 }
+
+export type SearchHit = {
+  turn: number;
+  /** Where the match was found. */
+  source: "user" | "assistant";
+  /** Snippet centered on the match, truncated to ~120 chars. */
+  snippet: string;
+};
+
+/**
+ * Find case-insensitive substring matches of `query` in user messages and
+ * orchestrator best answers. Returns at most `maxHits` hits per session.
+ *
+ * Pure function — no I/O.
+ */
+export function searchSessionEvents(
+  events: SessionEvent[],
+  query: string,
+  maxHits = 5,
+): SearchHit[] {
+  if (query.length === 0) return [];
+  const needle = query.toLowerCase();
+  const hits: SearchHit[] = [];
+  for (const e of events) {
+    if (hits.length >= maxHits) break;
+    if (e.type === "user") {
+      const idx = e.text.toLowerCase().indexOf(needle);
+      if (idx !== -1) {
+        hits.push({ turn: e.turn, source: "user", snippet: makeSnippet(e.text, idx, query.length) });
+      }
+    } else if (e.type === "orchestrator") {
+      const text = e.payload.bestAnswer;
+      const idx = text.toLowerCase().indexOf(needle);
+      if (idx !== -1) {
+        hits.push({
+          turn: e.turn,
+          source: "assistant",
+          snippet: makeSnippet(text, idx, query.length),
+        });
+      }
+    }
+  }
+  return hits;
+}
+
+const SNIPPET_RADIUS = 50;
+
+function makeSnippet(text: string, idx: number, matchLen: number): string {
+  // Replace newlines/tabs in the snippet so it stays one line.
+  const flat = text.replace(/\s+/g, " ");
+  // Recompute idx because flat may have shifted; fall back to substring search
+  const flatLower = flat.toLowerCase();
+  const matchIdx =
+    flatLower.indexOf(text.slice(idx, idx + matchLen).replace(/\s+/g, " ").toLowerCase());
+  const useIdx = matchIdx >= 0 ? matchIdx : 0;
+  const start = Math.max(0, useIdx - SNIPPET_RADIUS);
+  const end = Math.min(flat.length, useIdx + matchLen + SNIPPET_RADIUS);
+  const prefix = start > 0 ? "…" : "";
+  const suffix = end < flat.length ? "…" : "";
+  return prefix + flat.slice(start, end).trim() + suffix;
+}
