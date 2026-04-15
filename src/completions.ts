@@ -19,6 +19,7 @@ export const TOP_LEVEL_COMMANDS = [
   "sessions",
   "doctor",
   "completions",
+  "pair",
   "-i",
   "--interactive",
   "--version",

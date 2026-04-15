@@ -57,7 +57,7 @@ import {
   type SessionEvent,
 } from "./session.js";
 
-const VERSION = "1.8.1";
+const VERSION = "1.9.0";
 const REQUIRED_BINARIES = ["git", "gemini", "claude", "codex"] as const;
 const DEFAULT_AGENT_IDLE_TIMEOUT_MS = Number(
   process.env.GITGANG_AGENT_IDLE_TIMEOUT ?? 7 * 60 * 1000,
@@ -959,6 +959,82 @@ function parseArgs(raw: string[]) {
     const force = raw.includes("--force") || raw.includes("-f");
     return { subcommand: { kind: "init", force } } as unknown as ParsedArgs;
   }
+  // Pair subcommand — AI pair programming mode.
+  if (raw[0] === "pair") {
+    const validPairAgents = ["claude", "codex"];
+    let coder: string | undefined;
+    let reviewer: string | undefined;
+    let task: string | undefined;
+    let yolo = true;
+    let timeoutMs = 30 * 60 * 1000;
+    let reviewIntervalMs = 45_000;
+    let maxInterventions = 5;
+
+    for (let j = 1; j < raw.length; j++) {
+      switch (raw[j]) {
+        case "--coder":
+          if (j + 1 >= raw.length) throw new Error("--coder requires a value (claude or codex)");
+          coder = raw[++j];
+          if (!validPairAgents.includes(coder)) throw new Error(`Invalid coder "${coder}". Must be: claude, codex`);
+          break;
+        case "--reviewer":
+          if (j + 1 >= raw.length) throw new Error("--reviewer requires a value (claude or codex)");
+          reviewer = raw[++j];
+          if (!validPairAgents.includes(reviewer)) throw new Error(`Invalid reviewer "${reviewer}". Must be: claude, codex`);
+          break;
+        case "--task":
+          if (j + 1 >= raw.length) throw new Error("--task requires a value");
+          task = raw[++j];
+          break;
+        case "--yolo":
+          yolo = true;
+          break;
+        case "--no-yolo":
+          yolo = false;
+          break;
+        case "--timeout": {
+          if (j + 1 >= raw.length) throw new Error("--timeout requires a value");
+          const parsed = parseDuration(raw[++j]);
+          if (parsed === undefined) throw new Error(`Invalid duration "${raw[j]}"`);
+          timeoutMs = parsed;
+          break;
+        }
+        case "--review-interval": {
+          if (j + 1 >= raw.length) throw new Error("--review-interval requires a value");
+          const parsed = parseDuration(raw[++j]);
+          if (parsed === undefined) throw new Error(`Invalid duration "${raw[j]}"`);
+          reviewIntervalMs = parsed;
+          break;
+        }
+        case "--max-interventions":
+          if (j + 1 >= raw.length) throw new Error("--max-interventions requires a number");
+          maxInterventions = Number(raw[++j]);
+          break;
+        default:
+          if (!raw[j].startsWith("-") && !task) {
+            task = raw[j];
+          }
+          break;
+      }
+    }
+
+    if (!coder) throw new Error("--coder is required (claude or codex)");
+    if (!reviewer) throw new Error("--reviewer is required (claude or codex)");
+    if (!task) throw new Error("A task is required. Usage: gg pair --coder claude --reviewer codex \"your task\"");
+
+    return {
+      subcommand: {
+        kind: "pair",
+        coder,
+        reviewer,
+        task,
+        yolo,
+        timeoutMs,
+        reviewIntervalMs,
+        maxInterventions,
+      },
+    } as unknown as ParsedArgs;
+  }
   // Completions subcommand — emit a shell completion script.
   if (raw[0] === "completions") {
     const shell = raw[1];
@@ -1235,7 +1311,17 @@ interface ParsedArgs {
     | { kind: "sessions_stats"; id: string; json?: boolean }
     | { kind: "doctor"; json?: boolean }
     | { kind: "completions"; shell: "bash" | "zsh" | "fish" }
-    | { kind: "init"; force: boolean };
+    | { kind: "init"; force: boolean }
+    | {
+        kind: "pair";
+        coder: string;
+        reviewer: string;
+        task: string;
+        yolo: boolean;
+        timeoutMs: number;
+        reviewIntervalMs: number;
+        maxInterventions: number;
+      };
 }
 
 export function normalizeParsedArgs(parsed: ParsedArgs): ParsedArgs {
@@ -2739,6 +2825,23 @@ export async function dispatchMain(parsed: ParsedArgs): Promise<number> {
         "Edit this file to set per-repo defaults (automerge, reviewer, models).\n",
     );
     return 0;
+  }
+  if (parsed.subcommand?.kind === "pair") {
+    const { runPairMode } = await import("./pair.js");
+    const repo = await repoRoot();
+    const base = await currentBranch(repo);
+    return runPairMode({
+      coder: parsed.subcommand.coder as "claude" | "codex",
+      reviewer: parsed.subcommand.reviewer as "claude" | "codex",
+      task: parsed.subcommand.task,
+      repoRoot: repo,
+      baseBranch: base,
+      yolo: parsed.subcommand.yolo,
+      timeoutMs: parsed.subcommand.timeoutMs,
+      reviewIntervalMs: parsed.subcommand.reviewIntervalMs,
+      maxInterventions: parsed.subcommand.maxInterventions,
+      maxReviewOutputLines: 500,
+    });
   }
   if (parsed.interactive) {
     return runInteractive(parsed);
