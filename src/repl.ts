@@ -246,8 +246,44 @@ export function estimateHistoryBytes(
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
+import type { ChildProcess } from "node:child_process";
 import type { AgentId } from "./cli";
 import { createWorktree, spawnProcess } from "./cli";
+
+/**
+ * Registry of subprocess children spawned by the current turn. Populated by
+ * createRealFanOut and createRealOrchestrator; drained on Ctrl+C by
+ * cancelActiveChildren(). Module-level because gitgang runs as a single
+ * process with one active session at a time.
+ */
+const activeChildren = new Set<ChildProcess>();
+
+function registerActiveChild(proc: ChildProcess): void {
+  activeChildren.add(proc);
+  proc.once("exit", () => activeChildren.delete(proc));
+  proc.once("close", () => activeChildren.delete(proc));
+}
+
+/**
+ * Send SIGTERM to every registered child subprocess. Returns the number of
+ * children signalled. Safe to call when no children are active (returns 0).
+ */
+export function cancelActiveChildren(): number {
+  let count = 0;
+  for (const proc of activeChildren) {
+    try {
+      proc.kill("SIGTERM");
+      count++;
+    } catch {
+      // already dead; ignore
+    }
+  }
+  return count;
+}
+
+export function activeChildCount(): number {
+  return activeChildren.size;
+}
 import { buildTurnPrompt } from "./turn";
 import { orchestratorSpawnConfig, parseOrchestratorOutput } from "./orchestrator";
 
@@ -294,6 +330,7 @@ export function createRealFanOut(cfg: RealFanOutConfig): ExecuteTurnDeps["fanOut
             .map((a) => JSON.stringify(a))
             .join(" ")}`;
           const proc = spawnProcess(["bash", "-c", bashCmd], { cwd: wt.dir });
+          registerActiveChild(proc);
 
           let timedOut = false;
           const timer = setTimeout(() => {
@@ -419,6 +456,7 @@ export function createRealOrchestrator(
     writeFileSync(inputFile, JSON.stringify(input, null, 2));
 
     const proc = spawnProcess([command, ...args], { cwd: cfg.repoRoot });
+    registerActiveChild(proc);
 
     try {
       proc.stdin?.write(stdin);

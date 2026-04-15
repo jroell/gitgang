@@ -27,6 +27,8 @@ import {
   createRealFanOut,
   createRealOrchestrator,
   executeTurn,
+  cancelActiveChildren,
+  activeChildCount,
   type ExecuteTurnDeps,
 } from "./repl.js";
 import type { MergePlan as OrchestratorMergePlan } from "./orchestrator.js";
@@ -2634,6 +2636,36 @@ async function runInteractive(parsed: ParsedArgs): Promise<number> {
     },
   };
 
+  // Ctrl+C handler: first press cancels current turn (kills subprocesses);
+  // a second press within 3s exits. Outside a turn, the same 2-press pattern
+  // exits. Installed once per interactive session.
+  let pendingExit = false;
+  let pendingExitTimer: ReturnType<typeof setTimeout> | null = null;
+  const armPendingExit = () => {
+    pendingExit = true;
+    if (pendingExitTimer) clearTimeout(pendingExitTimer);
+    pendingExitTimer = setTimeout(() => {
+      pendingExit = false;
+      pendingExitTimer = null;
+    }, 3000);
+  };
+  const sigintHandler = () => {
+    if (pendingExit) {
+      process.stdout.write("\nExiting.\n");
+      process.exit(130);
+    }
+    if (activeChildCount() > 0) {
+      const killed = cancelActiveChildren();
+      process.stdout.write(
+        `\n⚠ Turn cancelled. Signalled ${killed} subprocess(es). Press Ctrl+C again within 3s to exit.\n`,
+      );
+    } else {
+      process.stdout.write("\n(Press Ctrl+C again within 3s to exit.)\n");
+    }
+    armPendingExit();
+  };
+  process.on("SIGINT", sigintHandler);
+
   if (parsed.opener && parsed.opener.trim().length > 0) {
     await executeTurn(parsed.opener, null, executeTurnDeps);
   }
@@ -2746,6 +2778,11 @@ async function runInteractive(parsed: ParsedArgs): Promise<number> {
       }
     },
   });
+
+  // Clean REPL exit (e.g., /quit) — detach the SIGINT handler so the caller
+  // can process.exit(0) normally.
+  process.off("SIGINT", sigintHandler);
+  if (pendingExitTimer) clearTimeout(pendingExitTimer);
 
   return 0;
 }

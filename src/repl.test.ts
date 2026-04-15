@@ -274,3 +274,16 @@ describe("long history warning", () => {
     ).toBe(4);
   });
 });
+
+import { cancelActiveChildren, activeChildCount } from "./repl";
+import { spawn } from "node:child_process";
+
+describe("cancelActiveChildren", () => {
+  test("returns 0 when no children active", () => {
+    expect(cancelActiveChildren()).toBe(0);
+  });
+
+  test("activeChildCount starts at 0", () => {
+    expect(activeChildCount()).toBe(0);
+  });
+});
