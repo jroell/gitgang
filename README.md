@@ -92,6 +92,7 @@ For questions, the turn ends with the synthesis. For code changes, the orchestra
     /redo          re-run the last user message as a fresh turn
     /only <agent> <msg>  run this single turn with only one agent (gemini|claude|codex)
     /skip <agent> <msg>  run this single turn skipping one agent
+    /clear         forget conversation so far (log stays on disk)
     /history       print the transcript
     /agents        show the agent roster and models
     /set K V       set a runtime knob (e.g. /set automerge on)

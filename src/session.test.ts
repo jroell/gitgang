@@ -1132,3 +1132,116 @@ describe("searchSessionEvents", () => {
     expect(hits[1].source).toBe("assistant");
   });
 });
+
+import { eventsAfterLastClear } from "./session";
+
+describe("eventsAfterLastClear", () => {
+  test("returns full array when no clear event", () => {
+    const events: SessionEvent[] = [
+      { ts: "t", turn: 1, type: "user", text: "hi", forcedMode: null },
+    ];
+    expect(eventsAfterLastClear(events)).toHaveLength(1);
+  });
+
+  test("returns events after a single clear event", () => {
+    const events: SessionEvent[] = [
+      { ts: "t1", turn: 1, type: "user", text: "a", forcedMode: null },
+      { ts: "t2", turn: 2, type: "clear" },
+      { ts: "t3", turn: 3, type: "user", text: "b", forcedMode: null },
+    ];
+    const scoped = eventsAfterLastClear(events);
+    expect(scoped).toHaveLength(1);
+    expect(scoped[0]).toMatchObject({ type: "user", text: "b" });
+  });
+
+  test("uses the MOST RECENT clear event as cutoff", () => {
+    const events: SessionEvent[] = [
+      { ts: "t1", turn: 1, type: "user", text: "a", forcedMode: null },
+      { ts: "t2", turn: 1, type: "clear" },
+      { ts: "t3", turn: 2, type: "user", text: "b", forcedMode: null },
+      { ts: "t4", turn: 2, type: "clear" },
+      { ts: "t5", turn: 3, type: "user", text: "c", forcedMode: null },
+    ];
+    const scoped = eventsAfterLastClear(events);
+    expect(scoped).toHaveLength(1);
+    expect(scoped[0]).toMatchObject({ type: "user", text: "c" });
+  });
+
+  test("empty array when clear is last event", () => {
+    const events: SessionEvent[] = [
+      { ts: "t1", turn: 1, type: "user", text: "a", forcedMode: null },
+      { ts: "t2", turn: 1, type: "clear" },
+    ];
+    expect(eventsAfterLastClear(events)).toEqual([]);
+  });
+});
+
+describe("reconstructHistory respects /clear", () => {
+  test("ignores pre-clear turns", () => {
+    const events: SessionEvent[] = [
+      { ts: "t1", turn: 1, type: "user", text: "first", forcedMode: null },
+      {
+        ts: "t2",
+        turn: 1,
+        type: "orchestrator",
+        payload: {
+          intent: "ask",
+          agreement: [],
+          disagreement: [],
+          bestAnswer: "a1",
+        },
+      },
+      { ts: "t3", turn: 2, type: "clear" },
+      { ts: "t4", turn: 3, type: "user", text: "fresh", forcedMode: null },
+      {
+        ts: "t5",
+        turn: 3,
+        type: "orchestrator",
+        payload: {
+          intent: "ask",
+          agreement: [],
+          disagreement: [],
+          bestAnswer: "a3",
+        },
+      },
+    ];
+    const history = reconstructHistory(events);
+    expect(history).toHaveLength(1);
+    expect(history[0]).toEqual({ turn: 3, user: "fresh", assistant: "a3" });
+  });
+
+  test("with no clear event, behaves the same as before", () => {
+    const events: SessionEvent[] = [
+      { ts: "t1", turn: 1, type: "user", text: "x", forcedMode: null },
+      {
+        ts: "t2",
+        turn: 1,
+        type: "orchestrator",
+        payload: { intent: "ask", agreement: [], disagreement: [], bestAnswer: "y" },
+      },
+    ];
+    const history = reconstructHistory(events);
+    expect(history).toEqual([{ turn: 1, user: "x", assistant: "y" }]);
+  });
+});
+
+describe("findLastUserMessage respects /clear", () => {
+  test("returns null when last event is a clear and no user after", () => {
+    const events: SessionEvent[] = [
+      { ts: "t1", turn: 1, type: "user", text: "pre", forcedMode: null },
+      { ts: "t2", turn: 2, type: "clear" },
+    ];
+    expect(findLastUserMessage(events)).toBeNull();
+  });
+
+  test("returns post-clear user when present", () => {
+    const events: SessionEvent[] = [
+      { ts: "t1", turn: 1, type: "user", text: "pre", forcedMode: null },
+      { ts: "t2", turn: 2, type: "clear" },
+      { ts: "t3", turn: 3, type: "user", text: "post", forcedMode: null },
+    ];
+    const result = findLastUserMessage(events);
+    expect(result?.text).toBe("post");
+    expect(result?.turn).toBe(3);
+  });
+});
