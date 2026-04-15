@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createSession, generateSessionId, appendEvent, readEvents, type SessionEvent } from "./session";
+import { createSession, generateSessionId, appendEvent, readEvents, loadSession, reconstructHistory, type SessionEvent } from "./session";
 
 let tmp: string;
 beforeEach(() => {
@@ -118,5 +118,92 @@ describe("session event log", () => {
     expect(events).toHaveLength(2);
     expect(events[0].type).toBe("user");
     expect(events[1].type).toBe("user");
+  });
+});
+
+describe("loadSession / reconstructHistory", () => {
+  test("loadSession reads metadata and events", () => {
+    const session = createSession(tmp, {
+      models: { gemini: "g", claude: "c", codex: "x" },
+      reviewer: "codex",
+      automerge: "ask",
+    });
+    appendEvent(session.logPath, {
+      ts: "t1",
+      turn: 1,
+      type: "user",
+      text: "hi",
+      forcedMode: null,
+    });
+    const loaded = loadSession(session.dir);
+    expect(loaded.id).toBe(session.id);
+    expect(loaded.events).toHaveLength(1);
+  });
+
+  test("reconstructHistory pairs user + orchestrator messages by turn", () => {
+    const session = createSession(tmp, {
+      models: { gemini: "g", claude: "c", codex: "x" },
+      reviewer: "codex",
+      automerge: "ask",
+    });
+    appendEvent(session.logPath, {
+      ts: "t1",
+      turn: 1,
+      type: "user",
+      text: "first",
+      forcedMode: null,
+    });
+    appendEvent(session.logPath, {
+      ts: "t2",
+      turn: 1,
+      type: "orchestrator",
+      payload: {
+        intent: "ask",
+        agreement: [],
+        disagreement: [],
+        bestAnswer: "answer one",
+      },
+    });
+    appendEvent(session.logPath, {
+      ts: "t3",
+      turn: 2,
+      type: "user",
+      text: "second",
+      forcedMode: null,
+    });
+    appendEvent(session.logPath, {
+      ts: "t4",
+      turn: 2,
+      type: "orchestrator",
+      payload: {
+        intent: "ask",
+        agreement: [],
+        disagreement: [],
+        bestAnswer: "answer two",
+      },
+    });
+
+    const history = reconstructHistory(readEvents(session.logPath));
+    expect(history).toEqual([
+      { turn: 1, user: "first", assistant: "answer one" },
+      { turn: 2, user: "second", assistant: "answer two" },
+    ]);
+  });
+
+  test("reconstructHistory drops incomplete trailing turn", () => {
+    const session = createSession(tmp, {
+      models: { gemini: "g", claude: "c", codex: "x" },
+      reviewer: "codex",
+      automerge: "ask",
+    });
+    appendEvent(session.logPath, {
+      ts: "t1",
+      turn: 1,
+      type: "user",
+      text: "started",
+      forcedMode: null,
+    });
+    const history = reconstructHistory(readEvents(session.logPath));
+    expect(history).toHaveLength(0);
   });
 });
