@@ -12,7 +12,11 @@ bun.lock
 
 # Worktrees
 .ai-worktrees/
+.worktrees/
 .logs/
+
+# Interactive sessions (v1.7.0)
+.gitgang/
 
 # Environment
 .env
