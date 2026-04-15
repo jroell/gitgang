@@ -360,3 +360,157 @@ export function formatPrContent(
 
   return { title, body: sections.join("\n") };
 }
+
+/**
+ * Render a full session as portable markdown — meant for sharing,
+ * pasting into tickets, or attaching to PRs/incident reports.
+ *
+ * Sections:
+ *   # Session <id>
+ *   metadata table (started, models, reviewer, automerge)
+ *   ## Turn 1 — <first line of user message>
+ *     ### You asked
+ *     <user message>
+ *     ### Agents
+ *     status table per agent (with diff-stat if non-empty)
+ *     ### Synthesis
+ *     <bestAnswer; preserves original markdown>
+ *     #### Agreement (if any)
+ *     #### Disagreement (if any)
+ *     ### Outcome
+ *     merged|declined|pr_only branch (or none)
+ *   ## Turn 2 — ...
+ *
+ * Pure function — no I/O, no rendering to ANSI. Output is plain markdown.
+ */
+export function formatSessionExport(
+  events: SessionEvent[],
+  metadata: SessionMetadata,
+): string {
+  const lines: string[] = [];
+
+  lines.push(`# gitgang session \`${metadata.id}\``);
+  lines.push("");
+  lines.push("| field | value |");
+  lines.push("|---|---|");
+  lines.push(`| started_at | \`${metadata.startedAt}\` |`);
+  lines.push(`| reviewer | \`${metadata.reviewer}\` |`);
+  lines.push(`| automerge | \`${metadata.automerge}\` |`);
+  for (const [agent, model] of Object.entries(metadata.models)) {
+    lines.push(`| ${agent} model | \`${model}\` |`);
+  }
+  lines.push("");
+
+  // Group events by turn
+  const turns = new Map<number, SessionEvent[]>();
+  for (const e of events) {
+    const arr = turns.get(e.turn);
+    if (arr) arr.push(e);
+    else turns.set(e.turn, [e]);
+  }
+
+  const sortedTurns = [...turns.entries()].sort((a, b) => a[0] - b[0]);
+  for (const [turn, turnEvents] of sortedTurns) {
+    const userEvent = turnEvents.find(
+      (e): e is Extract<SessionEvent, { type: "user" }> => e.type === "user",
+    );
+    const agentEvents = turnEvents.filter(
+      (e): e is Extract<SessionEvent, { type: "agent_end" }> => e.type === "agent_end",
+    );
+    const orchEvent = turnEvents.find(
+      (e): e is Extract<SessionEvent, { type: "orchestrator" }> => e.type === "orchestrator",
+    );
+    const mergeEvents = turnEvents.filter(
+      (e): e is Extract<SessionEvent, { type: "merge" }> => e.type === "merge",
+    );
+
+    const headline = userEvent
+      ? userEvent.text.split("\n")[0].slice(0, 80)
+      : "(no user message)";
+    lines.push(`## Turn ${turn} — ${headline}`);
+    lines.push("");
+
+    if (userEvent) {
+      lines.push("### You asked");
+      lines.push("");
+      if (userEvent.forcedMode) {
+        lines.push(`*(forced mode: \`${userEvent.forcedMode}\`)*`);
+        lines.push("");
+      }
+      lines.push(userEvent.text);
+      lines.push("");
+    }
+
+    if (agentEvents.length > 0) {
+      lines.push("### Agents");
+      lines.push("");
+      lines.push("| agent | status | diff |");
+      lines.push("|---|---|---|");
+      for (const a of agentEvents) {
+        const diffCell = a.diffSummary
+          ? `\`${a.diffSummary.split("\n")[0].trim()}\``
+          : "—";
+        lines.push(`| \`${a.agent}\` | ${a.status} | ${diffCell} |`);
+      }
+      lines.push("");
+    }
+
+    if (orchEvent) {
+      lines.push("### Synthesis");
+      lines.push("");
+      lines.push(orchEvent.payload.bestAnswer);
+      lines.push("");
+
+      if (orchEvent.payload.agreement.length > 0) {
+        lines.push("#### Agreement");
+        lines.push("");
+        for (const a of orchEvent.payload.agreement) lines.push(`- ${a}`);
+        lines.push("");
+      }
+
+      if (orchEvent.payload.disagreement.length > 0) {
+        lines.push("#### Disagreement");
+        lines.push("");
+        for (const d of orchEvent.payload.disagreement) {
+          lines.push(`**${d.topic}**`);
+          for (const [agent, position] of Object.entries(d.positions)) {
+            lines.push(`- \`${agent}\`: ${position}`);
+          }
+          lines.push(`> Verdict: ${d.verdict}`);
+          if (d.evidence.length > 0) {
+            lines.push(`> Evidence: ${d.evidence.map((e) => `\`${e}\``).join(", ")}`);
+          }
+          lines.push("");
+        }
+      }
+
+      if (orchEvent.payload.mergePlan) {
+        const plan = orchEvent.payload.mergePlan;
+        lines.push(`#### Merge plan: \`${plan.pick}\``);
+        lines.push("");
+        lines.push(`Branches: ${plan.branches.map((b) => `\`${b}\``).join(", ")}`);
+        if (plan.rationale) {
+          lines.push("");
+          lines.push(`Rationale: ${plan.rationale}`);
+        }
+        lines.push("");
+      }
+    }
+
+    if (mergeEvents.length > 0) {
+      lines.push("### Outcome");
+      lines.push("");
+      for (const m of mergeEvents) {
+        lines.push(`- \`${m.outcome}\`: \`${m.branch || "(unspecified)"}\``);
+      }
+      lines.push("");
+    }
+  }
+
+  if (sortedTurns.length === 0) {
+    lines.push("_(empty session — no turns yet)_");
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}

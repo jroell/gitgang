@@ -41,6 +41,7 @@ import {
   findLastAgentBranch,
   findLastPickedBranch,
   formatPrContent,
+  formatSessionExport,
   type LoadedSession,
   type SessionEvent,
 } from "./session.js";
@@ -934,7 +935,22 @@ function parseArgs(raw: string[]) {
     if (raw[1] === "show" && raw[2]) {
       return { subcommand: { kind: "sessions_show", id: raw[2] } } as unknown as ParsedArgs;
     }
-    throw new Error("usage: gg sessions list | gg sessions show <id>");
+    if (raw[1] === "export" && raw[2]) {
+      // Optional --output <path>
+      let outputPath: string | undefined;
+      for (let j = 3; j < raw.length; j++) {
+        if ((raw[j] === "-o" || raw[j] === "--output") && raw[j + 1]) {
+          outputPath = raw[j + 1];
+          j++;
+        }
+      }
+      return {
+        subcommand: { kind: "sessions_export", id: raw[2], outputPath },
+      } as unknown as ParsedArgs;
+    }
+    throw new Error(
+      "usage: gg sessions list | gg sessions show <id> | gg sessions export <id> [--output PATH]",
+    );
   }
 
   let task: string | undefined;
@@ -1105,7 +1121,8 @@ interface ParsedArgs {
   automerge?: "on" | "off" | "ask";
   subcommand?:
     | { kind: "sessions_list" }
-    | { kind: "sessions_show"; id: string };
+    | { kind: "sessions_show"; id: string }
+    | { kind: "sessions_export"; id: string; outputPath?: string };
 }
 
 export function normalizeParsedArgs(parsed: ParsedArgs): ParsedArgs {
@@ -2566,6 +2583,9 @@ export async function dispatchMain(parsed: ParsedArgs): Promise<number> {
   if (parsed.subcommand?.kind === "sessions_show") {
     return runSessionsShow(parsed.subcommand.id);
   }
+  if (parsed.subcommand?.kind === "sessions_export") {
+    return runSessionsExport(parsed.subcommand.id, parsed.subcommand.outputPath);
+  }
   if (parsed.interactive) {
     return runInteractive(parsed);
   }
@@ -2916,6 +2936,23 @@ function runSessionsShow(id: string): number {
   }
   const loaded = loadSession(dir);
   process.stdout.write(formatSessionShow(loaded.events));
+  return 0;
+}
+
+function runSessionsExport(id: string, outputPath?: string): number {
+  const dir = resolve(".gitgang", "sessions", id);
+  if (!existsSync(dir)) {
+    process.stderr.write(`Session ${id} not found.\n`);
+    return 1;
+  }
+  const loaded = loadSession(dir);
+  const markdown = formatSessionExport(loaded.events, loaded.metadata);
+  if (outputPath) {
+    writeFileSync(outputPath, markdown);
+    process.stdout.write(`Wrote ${markdown.length} bytes to ${outputPath}\n`);
+  } else {
+    process.stdout.write(markdown);
+  }
   return 0;
 }
 
