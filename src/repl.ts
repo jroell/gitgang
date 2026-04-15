@@ -212,3 +212,226 @@ function currentTurnNumber(session: LoadedSession): number {
   for (const e of session.events) if (e.turn > max) max = e.turn;
   return max;
 }
+
+// ---------------------------------------------------------------------------
+// Real (subprocess-spawning) factories for fanOut and spawnOrchestrator
+// ---------------------------------------------------------------------------
+
+import { writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import type { Readable } from "node:stream";
+import type { AgentId } from "./cli";
+import { createWorktree, spawnProcess } from "./cli";
+import { buildTurnPrompt } from "./turn";
+import { orchestratorSpawnConfig, parseOrchestratorOutput } from "./orchestrator";
+
+async function readStream(stream?: Readable | null): Promise<string> {
+  if (!stream) return "";
+  return new Promise((resolve, reject) => {
+    let data = "";
+    stream.setEncoding("utf8");
+    stream.on("data", (chunk: string) => {
+      data += chunk;
+    });
+    stream.on("error", (err: Error) => reject(err));
+    stream.on("end", () => resolve(data));
+  });
+}
+
+export type RealFanOutConfig = {
+  agentIds: AgentId[];
+  models: Record<AgentId, string>;
+  yolo: boolean;
+  timeoutMs: number;
+  repoRoot: string;
+};
+
+export function createRealFanOut(cfg: RealFanOutConfig): ExecuteTurnDeps["fanOut"] {
+  return async ({ turn, userMessage, history, worktreesDir, base }) => {
+    mkdirSync(worktreesDir, { recursive: true });
+    const rootFolder = join(worktreesDir, `turn-${turn}`);
+    mkdirSync(rootFolder, { recursive: true });
+
+    const results: AgentResult[] = await Promise.all(
+      cfg.agentIds.map(async (agent): Promise<AgentResult> => {
+        let branch = `agents/${agent}/turn-${turn}`;
+        try {
+          const wt = await createWorktree(cfg.repoRoot, base, agent, rootFolder);
+          branch = wt.branch;
+
+          const prompt = buildTurnPrompt({ agent, base, userMessage, history });
+          const promptFile = join(wt.dir, ".gitgang-prompt.txt");
+          writeFileSync(promptFile, prompt);
+
+          const [command, ...args] = agentCommandFor(agent, cfg.models[agent], cfg.yolo);
+          const bashCmd = `cat ${JSON.stringify(promptFile)} | ${command} ${args
+            .map((a) => JSON.stringify(a))
+            .join(" ")}`;
+          const proc = spawnProcess(["bash", "-c", bashCmd], { cwd: wt.dir });
+
+          let timedOut = false;
+          const timer = setTimeout(() => {
+            timedOut = true;
+            try {
+              proc.kill("SIGTERM");
+            } catch {
+              // best effort
+            }
+          }, cfg.timeoutMs);
+
+          const [stdout, , code] = await Promise.all([
+            readStream(proc.stdout),
+            readStream(proc.stderr),
+            proc.exited,
+          ]);
+          clearTimeout(timer);
+
+          const diffSummary = await gitDiffStat(wt.dir, base);
+          const diffPaths = diffSummary
+            ? diffSummary
+                .split("\n")
+                .filter(Boolean)
+                .map((l) => l.split("|")[0].trim())
+                .filter((p) => p && !p.startsWith(" "))
+            : [];
+
+          const status: AgentResult["status"] = timedOut
+            ? "timeout"
+            : code === 0
+              ? "ok"
+              : "failed";
+
+          return {
+            id: agent,
+            model: cfg.models[agent],
+            status,
+            branch,
+            stdoutTail: stdout.slice(-8192),
+            diffSummary,
+            diffPaths,
+          };
+        } catch (err) {
+          return {
+            id: agent,
+            model: cfg.models[agent],
+            status: "failed",
+            branch,
+            stdoutTail: (err as Error).message,
+            diffSummary: "",
+            diffPaths: [],
+          };
+        }
+      }),
+    );
+    return results;
+  };
+}
+
+function agentCommandFor(agent: AgentId, model: string, yolo: boolean): string[] {
+  switch (agent) {
+    case "gemini":
+      return ["gemini", "--model", model, ...(yolo ? ["--yolo"] : [])];
+    case "claude":
+      return [
+        "claude",
+        "--print",
+        "--model",
+        model,
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        ...(yolo ? ["--dangerously-skip-permissions"] : []),
+      ];
+    case "codex":
+      return [
+        "codex",
+        "exec",
+        "--model",
+        model,
+        ...(yolo ? ["--dangerously-bypass-approvals-and-sandbox"] : []),
+      ];
+  }
+}
+
+async function gitDiffStat(worktreeDir: string, base: string): Promise<string> {
+  try {
+    const proc = spawnProcess(["git", "diff", "--stat", `${base}..HEAD`], {
+      cwd: worktreeDir,
+    });
+    const [stdout] = await Promise.all([
+      readStream(proc.stdout),
+      readStream(proc.stderr),
+      proc.exited,
+    ]);
+    return stdout.trim();
+  } catch {
+    return "";
+  }
+}
+
+export type RealOrchestratorConfig = {
+  model: string;
+  yolo: boolean;
+  timeoutMs: number;
+  repoRoot: string;
+  debugDir: string;
+};
+
+export function createRealOrchestrator(
+  cfg: RealOrchestratorConfig,
+): ExecuteTurnDeps["spawnOrchestrator"] {
+  return async (input) => {
+    const { command, args, stdin } = orchestratorSpawnConfig({
+      input,
+      model: cfg.model,
+      yolo: cfg.yolo,
+    });
+
+    mkdirSync(cfg.debugDir, { recursive: true });
+    const turnTag = String(input.turn).padStart(3, "0");
+    const inputFile = join(cfg.debugDir, `turn-${turnTag}-input.json`);
+    writeFileSync(inputFile, JSON.stringify(input, null, 2));
+
+    const proc = spawnProcess([command, ...args], { cwd: cfg.repoRoot });
+
+    try {
+      proc.stdin?.write(stdin);
+      proc.stdin?.end();
+    } catch {
+      // best effort
+    }
+
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        proc.kill("SIGTERM");
+      } catch {
+        // best effort
+      }
+    }, cfg.timeoutMs);
+
+    const [stdout, , code] = await Promise.all([
+      readStream(proc.stdout),
+      readStream(proc.stderr),
+      proc.exited,
+    ]);
+    clearTimeout(timer);
+
+    const outputFile = join(cfg.debugDir, `turn-${turnTag}-output.txt`);
+    writeFileSync(outputFile, stdout);
+
+    if (timedOut) {
+      throw new Error(`orchestrator timed out after ${cfg.timeoutMs}ms`);
+    }
+    if (code !== 0) {
+      throw new Error(`orchestrator exited with code ${code}`);
+    }
+
+    const parsed = parseOrchestratorOutput(stdout);
+    if (!parsed.ok) {
+      throw new Error(`orchestrator output unparseable: ${parsed.reason}`);
+    }
+    return parsed.value;
+  };
+}

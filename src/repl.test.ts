@@ -210,3 +210,29 @@ describe("executeTurn (integration)", () => {
     expect(Buffer.concat(chunks).toString("utf8")).toContain("All agents failed");
   });
 });
+
+import { createRealFanOut, createRealOrchestrator } from "./repl";
+
+describe("real fan-out and orchestrator factories (shape only)", () => {
+  test("createRealFanOut returns a function", () => {
+    const fn = createRealFanOut({
+      agentIds: ["gemini", "claude", "codex"],
+      models: { gemini: "g", claude: "c", codex: "x" },
+      yolo: true,
+      timeoutMs: 60_000,
+      repoRoot: "/repo",
+    });
+    expect(typeof fn).toBe("function");
+  });
+
+  test("createRealOrchestrator returns a function", () => {
+    const fn = createRealOrchestrator({
+      model: "claude-opus-4-6",
+      yolo: true,
+      timeoutMs: 300_000,
+      repoRoot: "/repo",
+      debugDir: "/repo/.gitgang/debug",
+    });
+    expect(typeof fn).toBe("function");
+  });
+});
