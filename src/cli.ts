@@ -22,7 +22,7 @@ import * as readline from "node:readline";
 import chalk from "chalk";
 import ora from "ora";
 import { renderSidebar } from "./sidebar.js";
-import { runDoctor } from "./doctor.js";
+import { runDoctor, runDoctorJson } from "./doctor.js";
 import { generateCompletionScript } from "./completions.js";
 import {
   runRepl,
@@ -938,7 +938,8 @@ function parseDuration(value: string): number | undefined {
 function parseArgs(raw: string[]) {
   // Doctor subcommand — a simple zero-arg environment health check.
   if (raw[0] === "doctor") {
-    return { subcommand: { kind: "doctor" } } as unknown as ParsedArgs;
+    const json = raw.includes("--json");
+    return { subcommand: { kind: "doctor", json } } as unknown as ParsedArgs;
   }
   // Completions subcommand — emit a shell completion script.
   if (raw[0] === "completions") {
@@ -953,7 +954,10 @@ function parseArgs(raw: string[]) {
   // Sessions subcommand routing — must run before any other parsing.
   if (raw[0] === "sessions") {
     if (raw[1] === "list") {
-      return { subcommand: { kind: "sessions_list" } } as unknown as ParsedArgs;
+      const json = raw.includes("--json");
+      return {
+        subcommand: { kind: "sessions_list", json },
+      } as unknown as ParsedArgs;
     }
     if (raw[1] === "show" && raw[2]) {
       return { subcommand: { kind: "sessions_show", id: raw[2] } } as unknown as ParsedArgs;
@@ -978,8 +982,9 @@ function parseArgs(raw: string[]) {
       } as unknown as ParsedArgs;
     }
     if (raw[1] === "stats" && raw[2]) {
+      const json = raw.includes("--json");
       return {
-        subcommand: { kind: "sessions_stats", id: raw[2] },
+        subcommand: { kind: "sessions_stats", id: raw[2], json },
       } as unknown as ParsedArgs;
     }
     if (raw[1] === "search" && raw[2]) {
@@ -1203,14 +1208,14 @@ interface ParsedArgs {
   resume?: { mode: "latest" } | { mode: "id"; id: string };
   automerge?: "on" | "off" | "ask";
   subcommand?:
-    | { kind: "sessions_list" }
+    | { kind: "sessions_list"; json?: boolean }
     | { kind: "sessions_show"; id: string }
     | { kind: "sessions_export"; id: string; outputPath?: string }
     | { kind: "sessions_delete"; id: string; confirmed: boolean }
     | { kind: "sessions_prune"; olderThan: string; confirmed: boolean }
     | { kind: "sessions_search"; query: string; limit: number }
-    | { kind: "sessions_stats"; id: string }
-    | { kind: "doctor" }
+    | { kind: "sessions_stats"; id: string; json?: boolean }
+    | { kind: "doctor"; json?: boolean }
     | { kind: "completions"; shell: "bash" | "zsh" | "fish" };
 }
 
@@ -2667,7 +2672,7 @@ async function existingOneShotMain(parsed: ParsedArgs): Promise<number> {
 
 export async function dispatchMain(parsed: ParsedArgs): Promise<number> {
   if (parsed.subcommand?.kind === "sessions_list") {
-    return runSessionsList();
+    return runSessionsList(parsed.subcommand.json ?? false);
   }
   if (parsed.subcommand?.kind === "sessions_show") {
     return runSessionsShow(parsed.subcommand.id);
@@ -2685,9 +2690,14 @@ export async function dispatchMain(parsed: ParsedArgs): Promise<number> {
     return runSessionsSearch(parsed.subcommand.query, parsed.subcommand.limit);
   }
   if (parsed.subcommand?.kind === "sessions_stats") {
-    return runSessionsStats(parsed.subcommand.id);
+    return runSessionsStats(parsed.subcommand.id, parsed.subcommand.json ?? false);
   }
   if (parsed.subcommand?.kind === "doctor") {
+    if (parsed.subcommand.json) {
+      const { results, exitCode } = runDoctorJson(process.cwd());
+      process.stdout.write(JSON.stringify(results, null, 2) + "\n");
+      return exitCode;
+    }
     const { report, exitCode } = runDoctor(process.cwd(), process.stdout.isTTY ?? false);
     process.stdout.write(report);
     return exitCode;
@@ -3049,10 +3059,11 @@ export function formatSessionShow(events: SessionEvent[]): string {
   return lines.join("\n") + "\n";
 }
 
-function runSessionsList(): number {
+function runSessionsList(json = false): number {
   const root = resolve(".gitgang", "sessions");
   if (!existsSync(root)) {
-    process.stdout.write("No sessions found.\n");
+    if (json) process.stdout.write("[]\n");
+    else process.stdout.write("No sessions found.\n");
     return 0;
   }
   const summaries: SessionSummary[] = readdirSync(root)
@@ -3099,7 +3110,11 @@ function runSessionsList(): number {
       };
     })
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
-  process.stdout.write(formatSessionsList(summaries));
+  if (json) {
+    process.stdout.write(JSON.stringify(summaries, null, 2) + "\n");
+  } else {
+    process.stdout.write(formatSessionsList(summaries));
+  }
   return 0;
 }
 
@@ -3121,7 +3136,7 @@ function runSessionsDelete(id: string, confirmed: boolean): number {
   return 0;
 }
 
-function runSessionsStats(id: string): number {
+function runSessionsStats(id: string, json = false): number {
   const dir = resolve(".gitgang", "sessions", id);
   if (!existsSync(dir)) {
     process.stderr.write(`Session ${id} not found.\n`);
@@ -3129,7 +3144,11 @@ function runSessionsStats(id: string): number {
   }
   const loaded = loadSession(dir);
   const stats = computeSessionStats(loaded.events);
-  process.stdout.write(formatSessionStats(stats, loaded.id));
+  if (json) {
+    process.stdout.write(JSON.stringify({ id: loaded.id, ...stats }, null, 2) + "\n");
+  } else {
+    process.stdout.write(formatSessionStats(stats, loaded.id));
+  }
   return 0;
 }
 

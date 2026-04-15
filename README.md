@@ -102,6 +102,9 @@ For questions, the turn ends with the synthesis. For code changes, the orchestra
 **Session management:**
 
     gg doctor                             # environment health check (binaries, env vars, git)
+    gg doctor --json                      # machine-readable health check (for CI)
+    gg sessions list --json               # JSON list of sessions (pipe to jq)
+    gg sessions stats <id> --json         # JSON stats object
     gg completions bash|zsh|fish          # emit shell completion script (eval in your rc file)
     gg sessions list                      # list recent sessions (with topic)
     gg sessions search <query>            # find sessions matching text (topic/answer)
