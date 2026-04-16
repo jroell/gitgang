@@ -1,135 +1,134 @@
-# Quick Start: GitGang v1.4.0
+# Quick Start: GitGang
 
-## What's New? 🎉
-
-GitGang now has **beautiful, color-coded output** instead of JSON noise!
-
-### Before (v1.3.2):
-```
-[GEMINI] {"type":"tool_use","timestamp":"2025-11-04T01:50:27.511Z","tool_name":"run_shell_command"...}
-```
-
-### After (v1.4.0):
-```
-[GEMINI]   🔧 run_shell_command: Run vitest with coverage reporting
-[GEMINI]   Understood. I will increase Vitest coverage to 90%...
-```
-
-## Publishing (For Maintainer)
+## Install
 
 ```bash
-# 1. Set your npm token
-export NPM_TOKEN='your-npm-token-here'
-
-# 2. Run the release script (bumps version, builds dist/cli.js, publishes, pushes)
-cd /Users/jasonroell/ai-orchestrator
-./release.sh
-
-# 3. Commit and tag
-# release.sh already commits and pushes; tags are optional
+npm i -g gitgang@latest
+gg --version   # should print 1.9.x
 ```
 
-## Installing (For Users)
+Ensure at least two of the AI CLIs are on your `PATH`:
 
 ```bash
-# Install/upgrade globally
-npm install -g gitgang@latest
-
-# Verify version
-gg --version  # Should show 1.4.0
-
-# Or use npx
-npx gitgang@latest "your task"
+# Pair mode needs ≥2 of: claude, codex
+# Interactive mode needs all 3: gemini, claude, codex
+gg doctor      # checks everything and prints fix hints
 ```
 
-## Using It
+## Pair Mode (default)
+
+Bare `gg` enters AI pair programming — one agent codes while another reviews in real-time.
 
 ```bash
-# Navigate to your project
-cd /path/to/your/repo
-
-# Run gitgang with a task
-gitgang "Add user authentication with JWT"
-
-# Or use the short alias
-gg "Add user authentication with JWT"
+gg                          # prompts for a task, then pair mode (claude + codex)
+gg "add JWT auth middleware" # pair mode with that task
+gg pair --coder codex --reviewer claude "refactor auth"  # swap roles
 ```
 
-## Interactive Commands While Running
+The coder works normally while the reviewer monitors in parallel. If the reviewer spots a problem, it pauses the coder and the two agents have an autonomous conversation until they agree. When the coder finishes, the reviewer does a final pass and you get a session summary.
+
+### Pair Mode Options
 
 ```bash
-/status         # Check agent status
-/logs gemini    # View agent logs
-/nudge codex "Fix the failing test"
-/kill claude    # Stop an agent
-/review         # Trigger review manually
-/help           # Show all commands
+--coder <agent>          # claude (default) or codex
+--reviewer <agent>       # codex (default) or claude
+--review-interval <dur>  # how often reviewer checks (default: 45s)
+--timeout <dur>          # total session timeout (default: 30m)
+--no-yolo                # require human approval for agent actions
 ```
 
-## Output Features
+## Interactive Mode
 
-✅ **Color-Coded Agents**:
-- 🟣 [GEMINI] - Magenta
-- 🟡 [CLAUDE] - Yellow  
-- 🟢 [CODEX] - Green
+Multi-agent Q&A and code synthesis with all three agents:
 
-✅ **Clean Messages**:
-- 💭 Thinking/reasoning
-- 🔧 Tool usage
-- $ Shell commands
-- ⚙️ Initialization
+```bash
+gg -i                        # enter interactive REPL
+gg -i "how does auth work"   # pre-load first question
+```
 
-✅ **No JSON Spam**:
-- Filters out metadata
-- Shows only relevant content
-- Full logs saved in `.logs/` for debugging
+Each turn fans out to Gemini, Claude, and Codex in parallel. An orchestrator synthesizes their answers with agreement/disagreement analysis and code citations.
+
+### Slash Commands
+
+```
+/ask <msg>     force question mode
+/code <msg>    force code mode
+/merge         apply the previous turn's merge plan
+/pr            open a PR for the last merge
+/diff [agent]  show diff for an agent's branch
+/redo          re-run the last message
+/history       print transcript
+/agents        show agent roster
+/set K V       set a runtime knob (e.g. /set automerge on)
+/help          list commands
+/quit          exit
+```
+
+## Non-Git Q&A
+
+Run `gg -i` from any directory, even outside a git repo. Agents answer in read-only mode — no file mutations, no worktrees.
+
+Outside a git repo, bare `gg` also falls back to this read-only Q&A mode.
+
+## One-Shot Mode
+
+Fire-and-forget parallel execution with automatic merge:
+
+```bash
+gg "Add user authentication" --agents gemini,claude,codex
+```
+
+## Session Management
+
+```bash
+gg sessions list             # list recent sessions
+gg sessions show <id>        # print transcript
+gg sessions stats <id>       # summary counts
+gg sessions search <query>   # full-text search
+gg -i --resume               # resume most-recent session
+gg -i --resume <id>          # resume a specific session
+```
+
+## Environment Check
+
+```bash
+gg doctor         # color-coded health check
+gg doctor --json  # machine-readable for CI
+```
+
+## Configuration
+
+```bash
+gg init   # scaffold .gitgang/config.json
+```
+
+Priority: CLI flags > env vars > config.json > built-in defaults.
+
+Model overrides: `GITGANG_GEMINI_MODEL`, `GITGANG_CLAUDE_MODEL`, `GITGANG_CODEX_MODEL`.
 
 ## Troubleshooting
 
 ### "Not in a git repository"
-For code-change workflows, make sure you're in a git project:
-```bash
-git status  # Should work
-```
-
-If you just want read-only Q&A, `gg -i` can now run outside a git repo.
+Pair mode and one-shot mode require a git repo. For read-only Q&A, `gg -i` works anywhere.
 
 ### "Working tree not clean"
 Commit or stash changes first:
 ```bash
 git add -A && git commit -m "WIP"
-# or
-git stash
 ```
 
 ### Agent CLI not found
-Install required CLIs:
 ```bash
-npm install -g @google/gemini-cli
-npm install -g @anthropic/claude-cli  
-npm install -g @openai/codex-cli
-```
-
-### Still see JSON output?
-You might have an old cached version:
-```bash
-npm uninstall -g gitgang
-npm install -g gitgang@1.4.0
+gg doctor   # shows which CLIs are missing with install hints
 ```
 
 ## Documentation
 
-- `README.md` - Full documentation
-- `OUTPUT_IMPROVEMENTS.md` - Details on output changes
-- `CHANGELOG.md` - Version history
-- `PUBLISH.md` - Publishing guide
-- `WORK_SUMMARY.md` - Technical implementation
+- `README.md` — Full reference
+- `CHANGELOG.md` — Version history
+- `CLAUDE.md` — Developer context
 
 ## Support
 
 - GitHub Issues: https://github.com/jroell/gitgang/issues
 - npm Package: https://www.npmjs.com/package/gitgang
-
----
-
-**Enjoy the improved GitGang experience! 🤘**
