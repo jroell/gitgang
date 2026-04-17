@@ -364,8 +364,9 @@ function systemConstraints(agent: AgentId) {
         `Time budget: You have approximately ${timeBudget} seconds total to complete this task.`,
         `Strategy: commit a minimal working solution within the first ${Math.floor(timeBudget / 3)} seconds, then improve iteratively.`,
         "A committed partial solution is far better than a perfect solution that never gets committed.",
-        "Do not spend more than 20% of your budget on exploration/planning before writing and committing real code.",
-        `After ${Math.floor(timeBudget * 0.8)} seconds, stop adding features and focus on committing and verifying what you have.`,
+        "Do not spend more than 15% of your budget on observation and planning before writing and committing real code.",
+        `After ${Math.floor(timeBudget * 0.75)} seconds, stop adding features. Focus exclusively on committing, verifying, and cleaning up what you have.`,
+        "If a long-running command (compilation, training, etc.) is still running near the deadline, commit whatever partial output exists.",
       ]
     : [];
   return [
@@ -375,47 +376,65 @@ function systemConstraints(agent: AgentId) {
     "## Execution Strategy",
     "Follow this workflow: Observe → Plan → Implement → Verify → Commit",
     "",
-    "### Phase 1: Observe (brief)",
-    "Before writing any code, spend 30-60 seconds understanding the environment:",
-    "- List the directory structure (ls, find) to understand the project layout.",
-    "- Check what languages, frameworks, and tools are available (python3 --version, node --version, gcc --version, etc.).",
-    "- Read any existing task description files (TASK.md, README.md, etc.).",
-    "- Identify existing code, tests, and configuration files relevant to the task.",
-    "- Check for a Makefile, package.json, requirements.txt, or similar build configuration.",
+    "### Phase 1: Observe (targeted, not exhaustive)",
+    "Before writing any code, quickly understand the environment:",
+    "- Run a SINGLE combined command to gather context: `ls -la && cat TASK.md README.md 2>/dev/null && which python3 node gcc g++ make cargo rustc go java 2>/dev/null`",
+    "- Check for build config: Makefile, package.json, requirements.txt, setup.py, Cargo.toml, go.mod.",
+    "- Read the task description file thoroughly. Every detail matters.",
+    "- Check what's already installed: `pip list 2>/dev/null | head -20`, `dpkg -l 2>/dev/null | head -30`.",
+    "- If there's existing code, read it before modifying. Understand the structure before changing anything.",
+    "Do NOT exhaustively explore. Get what you need and move on.",
     "",
-    "### Phase 2: Plan (brief)",
-    "Mentally categorize the task and choose an appropriate strategy:",
-    "- For coding tasks: identify the language, write a minimal working solution first, then refine.",
-    "- For ML/training tasks: start with a small test run (few epochs, small data) to verify the pipeline works before scaling up.",
-    "- For security/crypto tasks: ground your approach with exact commands before running destructive operations.",
-    "- For system administration tasks: check current state before modifying configuration.",
-    "- For optimization tasks: get a correct baseline first, then optimize.",
+    "### Phase 2: Plan (brief, strategy-aware)",
+    "Categorize the task and choose the right approach:",
+    "- **Algorithm/data structure tasks**: Identify the core algorithm. Write the solution in the most natural language for the task. Test with provided examples before edge cases.",
+    "- **ML/training tasks**: Start with a tiny test run (1-2 epochs, small batch) to verify the pipeline compiles and runs, then scale up. Check for GPU availability with `nvidia-smi 2>/dev/null`.",
+    "- **Security/crypto tasks**: Ground your approach in exact, verified commands. Never run destructive operations without confirming the target. Check versions of tools (openssl version, etc.).",
+    "- **System/DevOps tasks**: Inspect current state before modifying. Back up config files before changing them. Verify services are running after changes.",
+    "- **Optimization tasks**: Get a correct baseline first, measure it, then optimize. Never optimize broken code.",
+    "- **Debugging/fix tasks**: Reproduce the bug first. Read error messages carefully. Check logs. Fix root cause, not symptoms.",
+    "- **Build/compilation tasks**: Check compiler versions and flags. Start with the simplest build command. Add complexity only if needed.",
+    "- **Data processing tasks**: Check input format and encoding. Handle edge cases (empty lines, special chars, large files). Verify output format matches spec exactly.",
+    "",
+    "Identify potential failure modes upfront and have a backup approach ready.",
     "",
     "### Phase 3: Implement",
-    "- Work in small, verifiable steps.",
-    "- Commit early and often with clear messages — a committed partial solution beats an uncommitted perfect one.",
-    "- Write complete files rather than making many small edits when creating new code.",
-    "- When writing files with heredoc, ensure proper escaping and indentation.",
-    "- If a command fails, read the error carefully, fix the root cause, and retry.",
-    "- Install missing dependencies promptly (pip install, apt-get install, npm install, etc.).",
+    "- Write a minimal correct solution first, then commit it, then improve.",
+    "- Write complete files rather than many incremental patches.",
+    "- For file creation, use `cat <<'ENDOFFILE' > filename` with single-quoted heredoc delimiter to prevent variable expansion issues.",
+    "- When heredocs contain special characters ($, `, \\), always use the single-quoted form `<<'EOF'` not `<<EOF`.",
+    "- If a command fails, read the error output carefully. Common causes: missing dependency, wrong path, syntax error, permission denied.",
+    "- Install missing dependencies immediately: `pip install X`, `apt-get install -y X`, `npm install X`.",
+    "- If pip install fails, try: `pip install --user X` or `python3 -m pip install X`.",
+    "- If apt-get is locked, try: `apt-get install -y --fix-broken` first.",
+    "- For Python tasks, check if you need to use `python3` vs `python`.",
+    "- After writing any file, verify it by reading it back: `cat filename | head -5` to confirm it was written correctly.",
     "",
     "### Phase 4: Verify",
-    "- Run any existing tests or validation scripts before declaring done.",
-    "- If the task specifies expected output or behavior, verify against it.",
-    "- Check for common errors: syntax errors, import failures, missing files, wrong paths.",
-    "- If tests fail, debug and fix — do not stop at the first error.",
+    "- Run any existing test/validation scripts BEFORE declaring done.",
+    "- If the task specifies expected output, compare your output character-by-character.",
+    "- Run the program with the exact command shown in the task description.",
+    "- Check return codes: `echo $?` after running validation commands.",
+    "- For numeric outputs, check precision and formatting requirements.",
+    "- If tests fail, read the failure output, fix the issue, re-run. Do not skip failing tests.",
     "",
     "### Phase 5: Commit",
-    "- Ensure all changes are committed with a clear, descriptive message.",
-    "- Add or update tests to cover the change when applicable.",
+    "- `git add -A && git commit -m 'descriptive message'` after each significant working milestone.",
+    "- Commit early: your first commit should happen within the first few minutes.",
+    "- If `git add` fails on large files, use .gitignore or `git add` specific files.",
     "",
     "## Error Recovery",
-    "- If a tool or command is not found, try installing it or finding an alternative.",
-    "- If you get stuck in a loop of the same error, step back and try a fundamentally different approach.",
-    "- If a file write produces malformed content, read the file back to verify and fix.",
-    "- If something fails, debug and keep going until complete.",
-    "- Prefer writing files with cat <<'EOF' heredocs or direct file writes; the 'replace' tool can fail when paths include extra whitespace.",
-    "At the end, summarize what changed.",
+    "- If a tool is not found, install it: `apt-get update && apt-get install -y <pkg>` (common: build-essential, python3-pip, curl, wget, unzip, cmake, pkg-config).",
+    "- If you hit the same error twice, STOP and try a fundamentally different approach. Do not loop.",
+    "- If a file write produces bad content, `cat -A filename` to check for hidden characters.",
+    "- If compilation fails with missing headers, install the dev package (e.g., `apt-get install -y libssl-dev`).",
+    "- If Python import fails, check: is the package installed? Are you using the right Python version? Is the module path correct?",
+    "- If a long command hangs, consider if there's a timeout option or if you should run it in background and check output.",
+    "- When stuck, think about whether the problem has a completely different solution path you haven't considered.",
+    "",
+    "## Output Discipline",
+    "- At the end, verify your committed solution actually works by running the validation one final time.",
+    "- Summarize what you did and what the final state is.",
     ...timeLines,
   ].join("\n");
 }
@@ -428,20 +447,21 @@ You are in a dedicated git worktree and branch for ${agent}.
 
 Objectives (in priority order):
 1) Produce a correct, working solution to the task. Correctness is the top priority.
-2) Commit your solution so it is captured in git history.
+2) Commit your solution so it is captured in git history. Commit EARLY - within the first few minutes.
 3) Verify your solution works by running any available tests, scripts, or validation.
-4) Add or update tests if appropriate.
+4) If verification reveals issues, fix them and commit again. Iterate until correct.
 5) Ensure the project builds and tests pass.
 
 Rules:
 - You have full authorization to modify files and run commands in this workspace.
-- Do not prompt for confirmation.
-- Start by observing the workspace: list files, read task descriptions, check available tools.
-- If the task references specific files, read them before modifying.
-- If blocked, try a different approach rather than repeating the same failing strategy.
-- When creating files, write the complete file content rather than patching incrementally.
-- Always commit your work. An imperfect committed solution is better than no committed solution.
-- Keep going until done.`;
+- Do not prompt for confirmation. Do not ask questions. Just execute.
+- Start by reading the task description carefully. Every word matters - pay attention to exact output formats, filenames, and constraints.
+- Read any referenced files before modifying them.
+- If blocked, try a fundamentally different approach. Do not repeat failing strategies more than twice.
+- When creating new files, write the complete file content at once rather than patching incrementally.
+- Always commit your work with git add -A && git commit -m 'description'. An imperfect committed solution is infinitely better than no committed solution.
+- After committing, keep improving until time runs out or the task is fully complete.
+- Before declaring done, run the validation/test one final time and confirm it passes.`;
 }
 
 function reviewerPromptJSON(

@@ -5,7 +5,7 @@ Usage (from gitgang repo root):
     PYTHONPATH=benchmarks/harbor harbor run \\
         --dataset terminal-bench@2.0 \\
         --agent-import-path "gitgang_harbor_agent:GitgangAgent" \\
-        --model claude-sonnet-4-6 \\
+        --model claude-opus-4-6 \\
         -n 1
 """
 
@@ -23,10 +23,11 @@ class GitgangAgent(BaseInstalledAgent):
     Runs gitgang --solo claude inside a terminal-bench Docker container.
 
     install() steps:
-      1. Node 20 LTS via NodeSource + curl/git via apt/apk/yum (root)
-      2. claude-code via the official install script (agent user)
-      3. Clone jroell/gitgang + npm ci --ignore-scripts + npm run build (root)
-      4. Symlink dist/cli.js -> /usr/local/bin/gitgang
+      1. System packages + Node 22 LTS via NodeSource (root)
+      2. Common build tools for compilation-heavy tasks (root)
+      3. claude-code via the official install script (agent user)
+      4. Clone jroell/gitgang + npm ci --ignore-scripts + npm run build (root)
+      5. Symlink dist/cli.js -> /usr/local/bin/gitgang
 
     run() steps:
       1. Ensure CWD is a git repo (terminal-bench envs may not have one)
@@ -43,7 +44,7 @@ class GitgangAgent(BaseInstalledAgent):
         return "node /opt/gitgang/dist/cli.js --version 2>/dev/null || echo unknown"
 
     async def install(self, environment: BaseEnvironment) -> None:
-        # ── 1. System packages + Node 20 LTS ───────────────────────────────
+        # 1. System packages + Node 22 LTS + common build tools
         await self.exec_as_root(
             environment,
             command=(
@@ -51,21 +52,26 @@ class GitgangAgent(BaseInstalledAgent):
                 "if command -v apt-get &>/dev/null; then "
                 "  export DEBIAN_FRONTEND=noninteractive; "
                 "  apt-get update -qq; "
-                "  apt-get install -y --no-install-recommends curl git ca-certificates gnupg; "
-                # NodeSource repo for Node 20 LTS
-                "  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -; "
+                "  apt-get install -y --no-install-recommends "
+                "    curl git ca-certificates gnupg "
+                "    build-essential cmake pkg-config "
+                "    python3-pip python3-venv python3-dev "
+                "    libssl-dev libffi-dev zlib1g-dev "
+                "    unzip wget jq; "
+                # NodeSource repo for Node 22 LTS
+                "  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -; "
                 "  apt-get install -y --no-install-recommends nodejs; "
                 "elif command -v apk &>/dev/null; then "
-                "  apk add --no-cache curl git nodejs npm; "
+                "  apk add --no-cache curl git nodejs npm python3 py3-pip build-base cmake; "
                 "elif command -v yum &>/dev/null; then "
-                "  yum install -y curl git nodejs npm; "
+                "  yum install -y curl git nodejs npm python3 python3-pip gcc gcc-c++ make cmake; "
                 "fi; "
-                "node --version; npm --version"
+                "node --version; npm --version; python3 --version"
             ),
             env={"DEBIAN_FRONTEND": "noninteractive"},
         )
 
-        # ── 2. Install claude-code (agent user) ────────────────────────────
+        # 2. Install claude-code (agent user)
         await self.exec_as_agent(
             environment,
             command=(
@@ -78,7 +84,7 @@ class GitgangAgent(BaseInstalledAgent):
             env={"ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY", "")},
         )
 
-        # ── 3. Clone gitgang ────────────────────────────────────────────────
+        # 3. Clone gitgang
         await self.exec_as_root(
             environment,
             command=(
@@ -88,7 +94,7 @@ class GitgangAgent(BaseInstalledAgent):
             ),
         )
 
-        # ── 4. Install npm deps + build (separate step for clearer errors) ──
+        # 4. Install npm deps + build (separate step for clearer errors)
         await self.exec_as_root(
             environment,
             command=(
@@ -111,7 +117,7 @@ class GitgangAgent(BaseInstalledAgent):
             ),
         )
 
-        # ── 5. Symlink onto PATH ────────────────────────────────────────────
+        # 5. Symlink onto PATH
         await self.exec_as_root(
             environment,
             command=(
@@ -132,7 +138,6 @@ class GitgangAgent(BaseInstalledAgent):
     ) -> None:
         escaped_instruction = shlex.quote(instruction)
 
-        # Mirror the reference claude_code.py auth handling
         # Harbor's default agent timeout is 900s. The run() method starts after
         # install completes, so nearly all 900s is available here. We reserve
         # 60s of buffer for harbor overhead and pass the rest to gitgang so the
@@ -152,12 +157,15 @@ class GitgangAgent(BaseInstalledAgent):
             "IS_SANDBOX": "1",
             "FORCE_AUTO_BACKGROUND_TASKS": "1",
             "ENABLE_BACKGROUND_TASKS": "1",
-            # Idle timeout for claude inside gitgang (ms) — generous to allow
+            # Idle timeout for claude inside gitgang (ms) - generous to allow
             # long-running commands (model training, compilation, etc.)
             "GITGANG_AGENT_IDLE_TIMEOUT": "600000",
             # Time budget passed into gitgang so it can inform the agent and
             # enforce a subprocess timeout before harbor's hard kill.
             "GITGANG_TIME_BUDGET_SECONDS": str(time_budget_sec),
+            # Max turns cap to prevent runaway loops while still allowing
+            # enough turns for complex multi-step tasks
+            "GITGANG_MAX_TURNS": "200",
             # Disable interactive prompts/confirmations inside claude
             "DISABLE_PROMPT": "1",
         }
