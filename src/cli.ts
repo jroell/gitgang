@@ -2109,6 +2109,34 @@ export async function runPostMergeCheckWithRetries(cmd: string, repo: string) {
   return lastExit;
 }
 
+export interface SoloRunOutcome {
+  outcome: "approved" | "dnf";
+  mergeBranch?: string;
+  reason?: string;
+  details?: string;
+}
+
+async function finalizeSoloRun(
+  opts: Opts,
+  agents: Partial<Record<AgentId, { worktree: Worktree }>>,
+): Promise<SoloRunOutcome> {
+  banner(`Solo ${opts.activeAgents[0]} — auto-merging (no reviewer)`, C.magenta);
+  const worktrees: Partial<Record<AgentId, Worktree>> = {};
+  for (const id of opts.activeAgents) {
+    const runner = agents[id];
+    if (runner) worktrees[id] = runner.worktree;
+  }
+  const mergeResult = await applyMergePlan(opts, worktrees, { status: "approve" });
+  if (mergeResult.ok) {
+    return { outcome: "approved", mergeBranch: mergeResult.branch };
+  }
+  return {
+    outcome: "dnf",
+    reason: mergeResult.reason,
+    details: mergeResult.details,
+  };
+}
+
 async function applyMergePlan(
   opts: Opts,
   worktrees: Partial<Record<AgentId, Worktree>>,
@@ -2746,6 +2774,22 @@ async function existingOneShotMain(parsed: ParsedArgs): Promise<number> {
       .map(({ id, result }) => `${id}: ${result.reason ?? "unknown failure"}`)
       .join("; ");
     await recordDNF(opts, dnfReason, dnfDetails);
+  } else if (soloMode) {
+    // Solo mode skips the multi-agent reviewer loop entirely, matching the
+    // --solo help text ("Run a single agent without reviewer"). The coder's
+    // branch is merged directly via applyMergePlan with a synthetic approve
+    // decision so the run exits 0 when the coder succeeds and the merge is
+    // clean.
+    const soloResult = await finalizeSoloRun(opts, agents);
+    if (soloResult.outcome === "approved") {
+      mergeBranch = soloResult.mergeBranch;
+      finalStatus = "approved";
+    } else {
+      finalStatus = "dnf";
+      dnfReason = soloResult.reason;
+      dnfDetails = soloResult.details;
+      if (dnfReason) await recordDNF(opts, dnfReason, dnfDetails);
+    }
   } else {
     banner(`Reviewer loop (${reviewerAgent.charAt(0).toUpperCase() + reviewerAgent.slice(1)})`, C.magenta);
     if (successfulAgentIds.length < activeAgents.length) {
@@ -3647,6 +3691,7 @@ export {
   reviewerPromptJSON,
   ensureDependencies,
   applyMergePlan,
+  finalizeSoloRun,
   recordDNF,
   parseStreamLine,
   shouldDisplayLine,

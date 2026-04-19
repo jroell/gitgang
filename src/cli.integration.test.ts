@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import {
   applyMergePlan,
+  finalizeSoloRun,
   reviewerSpawnConfig,
   reviewerPromptJSON,
   collectDiffSummaries,
@@ -123,6 +124,85 @@ describe("applyMergePlan integration", () => {
     }, decision);
 
     expect(result.ok).toBe(false);
+    expect(result.reason).toContain("Merge conflict");
+  });
+});
+
+describe("finalizeSoloRun — solo-mode auto-merge exit path", () => {
+  let repo: string;
+
+  beforeEach(async () => {
+    repo = join(tmpdir(), `gitgang-solo-${randomUUID()}`);
+    mkdirSync(repo, { recursive: true });
+    await runGit(repo, "init");
+    await runGit(repo, "config", "user.name", "Test User");
+    await runGit(repo, "config", "user.email", "test@example.com");
+    writeFileSync(join(repo, "README.md"), "# Base\n");
+    await runGit(repo, "add", ".");
+    await runGit(repo, "commit", "-m", "initial");
+    await runGit(repo, "branch", "-M", "main");
+  });
+
+  afterEach(() => {
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  function makeSoloOpts(): Opts {
+    return {
+      task: "Write hello",
+      repoRoot: repo,
+      baseBranch: "main",
+      workRoot: ".ai-worktrees",
+      rounds: 1,
+      timeoutMs: 1_000,
+      yolo: true,
+      autoPR: false,
+      dryRun: false,
+      activeAgents: ["claude"],
+      reviewerAgent: "claude",
+      postMergeChecks: [],
+      soloMode: true,
+    };
+  }
+
+  test("returns approved + merge branch for a successful solo coder (exit 0 path)", async () => {
+    // Simulate the coder's worktree: a branch with new commits diverged from main.
+    const coderBranch = "agents/claude/solo";
+    await runGit(repo, "checkout", "-b", coderBranch, "main");
+    writeFileSync(join(repo, "hello.py"), "print('hi')\n");
+    await runGit(repo, "add", "hello.py");
+    await runGit(repo, "commit", "-m", "feat: add hello");
+    await runGit(repo, "checkout", "main");
+
+    const result = await finalizeSoloRun(makeSoloOpts(), {
+      claude: { worktree: { agent: "claude", branch: coderBranch, dir: "", log: "" } },
+    });
+
+    expect(result.outcome).toBe("approved");
+    expect(result.mergeBranch).toMatch(/^ai-merge-/);
+    // The merge branch should now be checked out with the coder's file on it.
+    const head = await runGit(repo, "rev-parse", "--abbrev-ref", "HEAD");
+    expect(head).toBe(result.mergeBranch);
+  });
+
+  test("returns dnf with reason when the solo merge conflicts", async () => {
+    // Put a conflicting change on main so the merge is unclean.
+    writeFileSync(join(repo, "shared.txt"), "main version\n");
+    await runGit(repo, "add", "shared.txt");
+    await runGit(repo, "commit", "-m", "main shared");
+
+    const coderBranch = "agents/claude/solo-conflict";
+    await runGit(repo, "checkout", "-b", coderBranch, "HEAD~1");
+    writeFileSync(join(repo, "shared.txt"), "coder version\n");
+    await runGit(repo, "add", "shared.txt");
+    await runGit(repo, "commit", "-m", "coder shared");
+    await runGit(repo, "checkout", "main");
+
+    const result = await finalizeSoloRun(makeSoloOpts(), {
+      claude: { worktree: { agent: "claude", branch: coderBranch, dir: "", log: "" } },
+    });
+
+    expect(result.outcome).toBe("dnf");
     expect(result.reason).toContain("Merge conflict");
   });
 });
