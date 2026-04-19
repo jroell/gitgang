@@ -32,6 +32,9 @@ class GitgangAgent(BaseInstalledAgent):
     run() steps:
       1. Ensure CWD is a git repo (terminal-bench envs may not have one)
       2. Run: gitgang --solo claude --yolo --no-pr -- "<instruction>"
+
+    The run command is wrapped so it always exits 0. Harbor should rely on
+    the verifier (reward) to determine success, not the agent exit code.
     """
 
     SUPPORTS_ATIF: bool = False
@@ -44,7 +47,9 @@ class GitgangAgent(BaseInstalledAgent):
         return "node /opt/gitgang/dist/cli.js --version 2>/dev/null || echo unknown"
 
     async def install(self, environment: BaseEnvironment) -> None:
-        # 1. System packages + Node 22 LTS + common build tools
+        # 1. System packages + Node 22 LTS + common build tools + extra libs
+        #    Pre-installing a wide set of dev tools avoids mid-task dependency
+        #    resolution delays that eat into the agent's time budget.
         await self.exec_as_root(
             environment,
             command=(
@@ -54,10 +59,13 @@ class GitgangAgent(BaseInstalledAgent):
                 "  apt-get update -qq; "
                 "  apt-get install -y --no-install-recommends "
                 "    curl git ca-certificates gnupg "
-                "    build-essential cmake pkg-config "
-                "    python3-pip python3-venv python3-dev "
-                "    libssl-dev libffi-dev zlib1g-dev "
-                "    unzip wget jq; "
+                "    build-essential cmake pkg-config autoconf automake libtool "
+                "    python3-pip python3-venv python3-dev python3-setuptools "
+                "    libssl-dev libffi-dev zlib1g-dev libreadline-dev "
+                "    libsqlite3-dev libncurses5-dev libgdbm-dev libnss3-dev "
+                "    libbz2-dev liblzma-dev libxml2-dev libxslt1-dev "
+                "    unzip wget jq bc file xxd netcat-openbsd "
+                "    sqlite3 gawk flex bison; "
                 # NodeSource repo for Node 22 LTS
                 "  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -; "
                 "  apt-get install -y --no-install-recommends nodejs; "
@@ -176,6 +184,11 @@ class GitgangAgent(BaseInstalledAgent):
             model = self.model_name.split("/")[-1]
             model_flag = f"--model-claude {shlex.quote(model)} "
 
+        # The run command is wrapped so it always exits 0. Harbor raises
+        # NonZeroAgentExitCodeError for non-zero exits, but we want the
+        # verifier (reward) to be the sole arbiter of success. gitgang may
+        # exit non-zero for reasons that don't affect the solution quality
+        # (e.g., reviewer JSON parse failure, timeout after work is done).
         await self.exec_as_agent(
             environment,
             command=(
@@ -188,11 +201,17 @@ class GitgangAgent(BaseInstalledAgent):
                 "  git add -A 2>/dev/null || true && "
                 "  git commit -q -m 'bench: initial state' --allow-empty; "
                 "fi; "
-                # Run gitgang in solo claude mode
+                # Pre-flight: verify claude auth works before spending time
                 'export PATH="$HOME/.local/bin:$PATH"; '
+                "if ! claude --version &>/dev/null; then "
+                "  echo 'WARNING: claude not found on PATH'; "
+                "fi; "
+                # Run gitgang in solo claude mode. The trailing `; exit 0`
+                # ensures harbor doesn't abort on non-zero gitgang exit --
+                # the verifier's reward is the real signal.
                 f"gitgang --solo claude --yolo --no-pr {model_flag}"
                 f"-- {escaped_instruction} "
-                f"2>&1 | tee /logs/agent/gitgang.txt"
+                f"2>&1 | tee /logs/agent/gitgang.txt; exit 0"
             ),
             env=env,
         )
