@@ -40,11 +40,14 @@ GitGang works with these AI CLI tools. Install the ones you plan to use:
 
 ## 🤝 Pair Mode — AI Pair Programming
 
-Pair mode is the flagship feature. One agent codes while another acts as a real-time reviewer — like having a senior engineer watching over your shoulder, catching mistakes before they compound.
+Pair mode is the flagship feature and the **default when you run bare `gg`**. One agent codes while another acts as a real-time reviewer — like having a senior engineer watching over your shoulder, catching mistakes before they compound.
 
 ```bash
-gg pair --coder claude --reviewer codex "implement JWT authentication middleware"
+gg "implement JWT authentication middleware"          # pair mode (default)
+gg pair --coder claude --reviewer codex "same task"   # explicit pair mode
 ```
+
+Running `gg` with no arguments prompts for a task and then enters pair mode with `claude` as coder and `codex` as reviewer. Outside a git repo, bare `gg` falls back to read-only interactive Q&A mode instead.
 
 ### How It Works
 
@@ -65,13 +68,13 @@ gg pair --coder claude --reviewer claude "refactor auth module" --review-interva
 ```
 
 | Flag | Description | Default |
-|------|-------------|---------|
-| `--coder` | Agent that writes code (`claude` or `codex`) | **required** |
-| `--reviewer` | Agent that reviews (`claude` or `codex`) | **required** |
-| `--review-interval` | How often the reviewer checks | `45s` |
-| `--max-interventions` | Max reviewer pause cycles before forcing completion | `5` |
-| `--timeout` | Total session timeout | `30m` |
-| `--yolo` / `--no-yolo` | Auto-approve agent actions | `true` |
+||------|-------------|---------|
+|| `--coder` | Agent that writes code (`claude` or `codex`) | `claude` |
+|| `--reviewer` | Agent that reviews (`claude` or `codex`) | `codex` |
+|| `--review-interval` | How often the reviewer checks | `45s` |
+|| `--max-interventions` | Max reviewer pause cycles before forcing completion | `5` |
+|| `--timeout` | Total session timeout | `30m` |
+|| `--yolo` / `--no-yolo` | Auto-approve agent actions | `true` |
 
 ### What You See
 
@@ -96,8 +99,7 @@ Pair mode streams the coder's full activity to your terminal with a premium TUI:
 Start a conversational session with all three agents:
 
 ```bash
-gg              # enters interactive mode (no task)
-gg -i           # same
+gg -i                        # enters interactive mode
 gg -i "how does auth work"   # pre-loads first turn
 ```
 
@@ -254,10 +256,10 @@ npm test  # run test suite
 ## 🎯 Use Cases
 
 | Mode | Best For |
-|------|----------|
-| `gg pair` | Complex features, refactors, unfamiliar codebases — when early feedback prevents wasted work |
-| `gg -i` | Exploration, Q&A, comparing approaches, interactive code changes |
-| `gg "task"` | Simple, well-defined tasks — fire and forget |
+||------|----------|
+|| `gg` / `gg pair` | Complex features, refactors, unfamiliar codebases — when early feedback prevents wasted work |
+|| `gg -i` | Exploration, Q&A, comparing approaches, interactive code changes |
+|| `gg "task"` | Simple, well-defined tasks — fire and forget |
 
 ## ⚠️ Important Notes
 
