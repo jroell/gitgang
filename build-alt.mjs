@@ -1,18 +1,12 @@
-#!/usr/bin/env node
-import { mkdirSync, rmSync, chmodSync } from "node:fs";
+import { mkdirSync, chmodSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { build } from "esbuild";
 
 const distDir = resolve("dist");
 const outfile = resolve(distDir, "cli.js");
 
-// Clean dist to avoid bundling stale artifacts (e.g., old binaries)
-try {
-  rmSync(distDir, { recursive: true, force: true });
-} catch {
-  // If rmSync fails (e.g., EPERM in Docker/sandbox), allowOverwrite will handle it
-}
-mkdirSync(distDir, { recursive: true });
+// Don't rm dist - just overwrite in place
+if (!existsSync(distDir)) mkdirSync(distDir, { recursive: true });
 
 await build({
   entryPoints: ["src/cli.ts"],

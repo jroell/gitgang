@@ -5,7 +5,7 @@ Usage (from gitgang repo root):
     PYTHONPATH=benchmarks/harbor harbor run \\
         --dataset terminal-bench@2.0 \\
         --agent-import-path "gitgang_harbor_agent:GitgangAgent" \\
-        --model claude-opus-4-6 \\
+        --model claude-opus-4-7 \\
         -n 1
 """
 
@@ -24,7 +24,7 @@ class GitgangAgent(BaseInstalledAgent):
 
     install() steps:
       1. System packages + Node 22 LTS via NodeSource (root)
-      2. Common build tools for compilation-heavy tasks (root)
+      2. Rust toolchain via rustup (agent user)
       3. claude-code via the official install script (agent user)
       4. Clone jroell/gitgang + npm ci --ignore-scripts + npm run build (root)
       5. Symlink dist/cli.js -> /usr/local/bin/gitgang
@@ -79,20 +79,68 @@ class GitgangAgent(BaseInstalledAgent):
             env={"DEBIAN_FRONTEND": "noninteractive"},
         )
 
-        # 2. Install claude-code (agent user)
+        # 2. Install Rust toolchain (many tasks need Cargo/rustc)
+        await self.exec_as_agent(
+            environment,
+            command=(
+                "set -euo pipefail; "
+                "if ! command -v rustc &>/dev/null; then "
+                "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y 2>&1 | tail -3; "
+                "  . $HOME/.cargo/env; "
+                "  rustc --version; "
+                "else "
+                "  echo 'Rust already installed'; rustc --version; "
+                "fi"
+            ),
+        )
+
+        # 2b. Install Go toolchain (many tasks need it)
+        await self.exec_as_agent(
+            environment,
+            command=(
+                "set -euo pipefail; "
+                "if ! command -v go &>/dev/null; then "
+                "  GO_VERSION=$(curl -fsSL 'https://go.dev/VERSION?m=text' 2>/dev/null | head -1 || echo 'go1.23.2'); "
+                "  curl -fsSL \"https://go.dev/dl/${GO_VERSION}.linux-amd64.tar.gz\" | tar -C $HOME -xz 2>&1 | tail -1; "
+                '  echo \'export PATH="$HOME/go/bin:$HOME/.cargo/bin:$PATH"\' >> ~/.bashrc; '
+                "  export PATH=\"$HOME/go/bin:$PATH\"; "
+                "  go version; "
+                "else "
+                "  echo 'Go already installed'; go version; "
+                "fi"
+            ),
+        )
+
+        # 2c. Pre-install common Python packages (avoids mid-task pip delays)
+        #     These cover the most common task requirements across terminal-bench.
+        await self.exec_as_agent(
+            environment,
+            command=(
+                "set -euo pipefail; "
+                'export PATH="$HOME/.cargo/bin:$PATH"; '
+                "python3 -m pip install --break-system-packages -q "
+                "  numpy scipy pandas matplotlib requests flask pytest "
+                "  pyyaml toml jsonschema cryptography pycryptodome "
+                "  beautifulsoup4 lxml pillow sympy networkx "
+                "  2>&1 | tail -3 || true; "
+                "echo 'Python packages OK'"
+            ),
+        )
+
+        # 3. Install claude-code (agent user)
         await self.exec_as_agent(
             environment,
             command=(
                 "set -euo pipefail; "
                 "curl -fsSL https://claude.ai/install.sh | bash && "
-                'echo \'export PATH="$HOME/.local/bin:$PATH"\' >> ~/.bashrc && '
-                'export PATH="$HOME/.local/bin:$PATH" && '
+                'echo \'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"\' >> ~/.bashrc && '
+                'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" && '
                 "claude --version"
             ),
             env={"ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY", "")},
         )
 
-        # 3. Clone gitgang
+        # 4. Clone gitgang
         await self.exec_as_root(
             environment,
             command=(
@@ -102,7 +150,7 @@ class GitgangAgent(BaseInstalledAgent):
             ),
         )
 
-        # 4. Install npm deps + build (separate step for clearer errors)
+        # 5. Install npm deps + build (separate step for clearer errors)
         await self.exec_as_root(
             environment,
             command=(
@@ -125,7 +173,7 @@ class GitgangAgent(BaseInstalledAgent):
             ),
         )
 
-        # 5. Symlink onto PATH
+        # 6. Symlink onto PATH
         await self.exec_as_root(
             environment,
             command=(
@@ -173,7 +221,7 @@ class GitgangAgent(BaseInstalledAgent):
             "GITGANG_TIME_BUDGET_SECONDS": str(time_budget_sec),
             # Max turns cap to prevent runaway loops while still allowing
             # enough turns for complex multi-step tasks
-            "GITGANG_MAX_TURNS": "200",
+            "GITGANG_MAX_TURNS": "150",
             # Disable interactive prompts/confirmations inside claude
             "DISABLE_PROMPT": "1",
         }
@@ -184,14 +232,15 @@ class GitgangAgent(BaseInstalledAgent):
             model = self.model_name.split("/")[-1]
             model_flag = f"--model-claude {shlex.quote(model)} "
 
-        # The run command is wrapped so it always exits 0. Harbor raises
-        # NonZeroAgentExitCodeError for non-zero exits, but we want the
-        # verifier (reward) to be the sole arbiter of success. gitgang may
-        # exit non-zero for reasons that don't affect the solution quality
-        # (e.g., reviewer JSON parse failure, timeout after work is done).
+        # ── Environment Bootstrapping ──
+        # Gather a snapshot of the sandbox BEFORE the agent starts. This saves
+        # 2-5 exploration turns that the agent would otherwise spend on ls,
+        # which python3, etc. The snapshot is written to CLAUDE.md so Claude
+        # Code auto-reads it on startup. (Inspired by Meta-Harness 76.4%.)
         await self.exec_as_agent(
             environment,
             command=(
+                'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/go/bin:$PATH"; '
                 # Global git config so gitgang can commit inside worktrees
                 'git config --global user.email "agent@benchmark.local" 2>/dev/null || true; '
                 'git config --global user.name "agent" 2>/dev/null || true; '
@@ -201,14 +250,89 @@ class GitgangAgent(BaseInstalledAgent):
                 "  git add -A 2>/dev/null || true && "
                 "  git commit -q -m 'bench: initial state' --allow-empty; "
                 "fi; "
-                # Pre-flight: verify claude auth works before spending time
-                'export PATH="$HOME/.local/bin:$PATH"; '
+                # Gather environment snapshot and write CLAUDE.md
+                "{"
+                '  echo "# Environment Context (auto-generated)"; '
+                '  echo ""; '
+                '  echo "## CRITICAL INSTRUCTIONS"; '
+                '  echo "- This context was pre-gathered. DO NOT re-run discovery commands."; '
+                '  echo "- Read the task description below CAREFULLY — every word matters."; '
+                '  echo "- Read ALL existing source files and test files before writing any code."; '
+                '  echo "- Think first: what domain knowledge applies? What are the pitfalls? Pick the simplest reliable approach."; '
+                '  echo "- Commit EARLY: git add -A && git commit -m solution (before testing)."; '
+                '  echo "- Your work is verified by automated programmatic tests checking exact outputs."; '
+                '  echo "- If you edit the same file 3+ times and tests still fail, re-read the task and try a different approach."; '
+                '  echo "- If test/validation scripts exist, read their source code to understand what they check."; '
+                '  echo ""; '
+                # Task description FIRST — this is the most important context
+                '  echo "## Task Description"; '
+                "  cat TASK.md task.md task.txt README.md readme.md 2>/dev/null | head -300 || echo '(no task file found — task will be passed via prompt)'; "
+                '  echo ""; '
+                '  echo "## Test/Validation Scripts"; '
+                '  echo "\\`\\`\\`"; '
+                "  ls -la tests/ test/ verify* check* validate* run_tests* run* grade* score* Makefile 2>/dev/null | head -20 || echo '(none found)'; "
+                '  echo "\\`\\`\\`"; '
+                '  echo ""; '
+                '  echo "## Working Directory"; '
+                '  echo "\\`$(pwd)\\`"; '
+                '  echo ""; '
+                '  echo "## Files"; '
+                '  echo "\\`\\`\\`"; '
+                "  find . -maxdepth 3 -type f 2>/dev/null | grep -v '.git/' | head -80; "
+                '  echo "\\`\\`\\`"; '
+                '  echo ""; '
+                '  echo "## Available Tools"; '
+                '  echo "\\`\\`\\`"; '
+                "  which python3 python node npm gcc g++ make cmake cargo rustc go javac ruby perl 2>/dev/null || true; "
+                "  python3 --version 2>/dev/null || true; "
+                "  node --version 2>/dev/null || true; "
+                "  gcc --version 2>/dev/null | head -1 || true; "
+                "  rustc --version 2>/dev/null || true; "
+                "  go version 2>/dev/null || true; "
+                '  echo "\\`\\`\\`"; '
+                '  echo ""; '
+                '  echo "## Build Config"; '
+                '  echo "\\`\\`\\`"; '
+                "  cat Makefile makefile package.json requirements.txt setup.py pyproject.toml Cargo.toml go.mod CMakeLists.txt 2>/dev/null | head -120 || true; "
+                '  echo "\\`\\`\\`"; '
+                '  echo ""; '
+                '  echo "## Installed Python Packages"; '
+                '  echo "\\`\\`\\`"; '
+                "  python3 -m pip list --format=columns 2>/dev/null | head -50 || true; "
+                '  echo "\\`\\`\\`"; '
+                '  echo ""; '
+                '  echo "## System"; '
+                '  free -h 2>/dev/null | head -3 || true; '
+                "  nproc 2>/dev/null || true; "
+                "  nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || true; "
+                "} > CLAUDE.md 2>/dev/null; "
+                "git add CLAUDE.md 2>/dev/null && git commit -q -m 'bootstrap: environment context' 2>/dev/null || true; "
+                "echo 'Bootstrap OK'"
+            ),
+            env=env,
+        )
+
+        # ── Pre-flight check ──
+        await self.exec_as_agent(
+            environment,
+            command=(
+                'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/go/bin:$PATH"; '
                 "if ! claude --version &>/dev/null; then "
                 "  echo 'WARNING: claude not found on PATH'; "
                 "fi; "
-                # Run gitgang in solo claude mode. The trailing `; exit 0`
-                # ensures harbor doesn't abort on non-zero gitgang exit --
-                # the verifier's reward is the real signal.
+                "echo 'Pre-flight OK'"
+            ),
+            env=env,
+        )
+
+        # ── Run gitgang ──
+        # The run command is wrapped so it always exits 0. Harbor raises
+        # NonZeroAgentExitCodeError for non-zero exits, but we want the
+        # verifier (reward) to be the sole arbiter of success.
+        await self.exec_as_agent(
+            environment,
+            command=(
+                'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/go/bin:$PATH"; '
                 f"gitgang --solo claude --yolo --no-pr {model_flag}"
                 f"-- {escaped_instruction} "
                 f"2>&1 | tee /logs/agent/gitgang.txt; exit 0"

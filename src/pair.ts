@@ -97,7 +97,7 @@ interface AgentBackend {
 // ─── Backend Implementations ──────────────────────────────
 
 const DEFAULT_PAIR_MODELS: Record<PairAgentId, string> = {
-  claude: process.env.GITGANG_CLAUDE_MODEL || "claude-opus-4-6",
+  claude: process.env.GITGANG_CLAUDE_MODEL || "claude-opus-4-7",
   codex: process.env.GITGANG_CODEX_MODEL || "gpt-5.4",
 };
 

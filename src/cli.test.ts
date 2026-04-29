@@ -103,7 +103,7 @@ describe("Argument parsing", () => {
 describe("Prompt helpers", () => {
   test("systemConstraints returns multi-line instructions", () => {
     const result = systemConstraints("gemini");
-    expect(result).toContain("autonomous senior engineer");
+    expect(result).toContain("autonomous engineer");
     expect(result.split("\n").length).toBeGreaterThan(3);
   });
 
@@ -294,7 +294,7 @@ describe("Model configuration", () => {
 
   test("DEFAULT_MODELS contains expected default values", () => {
     expect(DEFAULT_MODELS.gemini).toBe("gemini-3.1-pro-preview");
-    expect(DEFAULT_MODELS.claude).toBe("claude-opus-4-6");
+    expect(DEFAULT_MODELS.claude).toBe("claude-opus-4-7");
     expect(DEFAULT_MODELS.codex).toBe("gpt-5.4");
   });
 

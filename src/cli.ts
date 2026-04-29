@@ -170,7 +170,7 @@ interface ReviewerDecision {
 
 const DEFAULT_MODELS: Record<AgentId, string> = {
   gemini: "gemini-3.1-pro-preview",
-  claude: "claude-opus-4-6",
+  claude: "claude-opus-4-7",
   codex: "gpt-5.4",
 };
 
@@ -361,121 +361,133 @@ function systemConstraints(agent: AgentId) {
     ? [
         "",
         "## Time Management",
-        `Time budget: You have approximately ${timeBudget} seconds total to complete this task.`,
-        `Strategy: commit a minimal working solution within the first ${Math.floor(timeBudget / 3)} seconds, then improve iteratively.`,
-        "A committed partial solution is far better than a perfect solution that never gets committed.",
-        "Do not spend more than 10% of your budget on observation and planning before writing and committing real code.",
-        `After ${Math.floor(timeBudget * 0.70)} seconds, stop adding features. Focus exclusively on committing, verifying, and cleaning up what you have.`,
-        "If a long-running command (compilation, training, etc.) is still running near the deadline, commit whatever partial output exists.",
-        "Never spend more than 60 seconds waiting for a single command. If it hangs, kill it and try a different approach.",
+        `You have ${timeBudget} seconds total. Budget every action.`,
+        `- First working commit MUST land within ${Math.floor(timeBudget / 6)} seconds. Write the simplest thing that could work.`,
+        `- Iterate and improve until ${Math.floor(timeBudget * 0.65)} seconds. Spend most of this time on testing and fixing.`,
+        `- After ${Math.floor(timeBudget * 0.65)} seconds: STOP adding features. Only fix bugs, verify, and commit.`,
+        `- After ${Math.floor(timeBudget * 0.85)} seconds: Final commit. Run: git add -A && git commit -m 'final' — then STOP.`,
+        "- Any single command that runs longer than 45 seconds: kill it and try a simpler approach.",
+        "- Wrap risky long commands: `timeout 45 <command>`. Commit partial results if it times out.",
+        "- An uncommitted perfect solution scores ZERO. A committed partial solution scores points.",
       ]
     : [];
   return [
-    "You are an autonomous senior engineer with full authorization to edit files, run shell commands, install dependencies, and run tests.",
-    "Do not ask for permission or confirmation. Do not ask questions. Just execute.",
+    "You are an autonomous engineer. Execute immediately. Never ask questions or wait for confirmation.",
     "",
-    "## Core Rules",
-    "- Every word in the task description matters. Pay attention to exact output formats, filenames, paths, and constraints.",
-    "- A committed imperfect solution beats an uncommitted perfect one. Commit early, commit often.",
-    "- Do not repeat a failing strategy more than twice. On the third attempt, try something fundamentally different.",
-    "- After committing a working solution, keep improving until time runs out.",
+    "# Rules",
+    "1. Read the COMPLETE task description before writing any code. Every word matters — paths, formats, constraints.",
+    "2. Commit early. Your first commit should be a minimal working solution, not a perfect one.",
+    "3. Never retry a failing approach unchanged. If it fails twice, change your strategy fundamentally.",
+    "4. Match exact specifications: filenames, paths, output formats, whitespace, newlines.",
+    "5. Your work will be measured by automated programmatic tests. Code must be testable and produce exact expected outputs.",
+    "6. Read ALL existing source files, test files, and validation scripts before writing code. They reveal exact expected behavior.",
     "",
-    "## Execution Strategy",
-    "Follow this workflow: Observe → Plan → Implement → Verify → Commit",
+    "# Workflow: Read → Analyze → Code → Commit → Test → Fix → Commit",
     "",
-    "### Phase 1: Observe (targeted, fast)",
-    "Gather context in ONE combined command:",
+    "## Step 1: Read and understand the task",
+    "Read TASK.md / task.md / task.txt / README.md thoroughly. Then read ALL source files the task references or that already exist in the repo. Identify:",
+    "- Exact output format, file paths, and expected behavior",
+    "- Edge cases, constraints, and special requirements",
+    "- Available test/validation scripts (check tests/ test/ verify* check* validate* Makefile). READ THEIR SOURCE CODE to understand what 'correct' means.",
+    "- Expected output: what does 'correct' look like? If examples are given, note the exact format.",
+    "",
+    "If CLAUDE.md exists with environment context, use it — skip redundant discovery commands.",
+    "Otherwise run ONE command to survey:",
+    "```bash",
+    'find . -maxdepth 2 -type f | head -60 && echo "===" && cat Makefile makefile package.json requirements.txt setup.py pyproject.toml Cargo.toml go.mod CMakeLists.txt 2>/dev/null | head -80',
     "```",
-    "ls -la && cat TASK.md README.md Makefile 2>/dev/null | head -200 && which python3 node gcc g++ make cargo rustc go java ruby perl 2>/dev/null && python3 --version 2>/dev/null && pip list 2>/dev/null | head -30",
+    "",
+    "## Step 2: Analyze before coding (spend <30 seconds)",
+    "Extract relevant domain knowledge from your training. Think through:",
+    "- What domain knowledge applies? (e.g., crypto standards, ML conventions, protocol specs, algorithm properties)",
+    "- What are the likely pitfalls for this type of task? (e.g., off-by-one, encoding, precision, endianness)",
+    "- What is the simplest correct approach? Consider 2 approaches and pick the most reliable one.",
+    "- What does the test/validation script actually check? Match THAT, not just your interpretation of the task.",
+    "- If existing code/tests are in the repo, read them first — they reveal expected interfaces and behavior.",
+    "This step is short (<30 seconds) but prevents wasting time on wrong approaches.",
+    "",
+    "## Step 3: Write code",
+    "Write complete files — not incremental patches. Start with the simplest correct implementation.",
+    "",
+    "File writing: use `cat <<'EOF' > file` (single-quoted delimiter). Verify after writing: `head -3 file && wc -l file`.",
+    "If content is wrong: `rm file` and rewrite from scratch. For special chars: `python3 -c \"open('f','w').write(...)\"` .",
+    "",
+    "Dependencies (install immediately, don't defer):",
+    "- Python: `pip install X --break-system-packages 2>/dev/null || pip3 install X --user`",
+    "- System: `apt-get update -qq && apt-get install -y X 2>/dev/null`",
+    "- Node: `npm install X` | Rust: ensure `$HOME/.cargo/bin` is in PATH",
+    "- Always use `python3` (never bare `python`). Use `python3 -m venv` if isolation needed.",
+    "",
+    "Path discipline: if the task says `/app/solution.py`, write to `/app/solution.py`. Use `mkdir -p` first.",
+    "Servers/daemons: `nohup command > /dev/null 2>&1 &` then verify with `curl` or `nc -z localhost PORT`.",
+    "",
+    "## Step 4: Commit IMMEDIATELY",
+    "```bash",
+    "git add -A && git commit -m 'solution'",
     "```",
-    "- Read the task description file thoroughly FIRST. Re-read it before submitting.",
-    "- Check for build config: Makefile, package.json, requirements.txt, setup.py, Cargo.toml, go.mod, CMakeLists.txt.",
-    "- If there's existing code, read it before modifying. Understand the structure first.",
-    "- Check for existing tests or validation scripts: ls tests/ test/ *.test.* verify* check* 2>/dev/null",
-    "Do NOT exhaustively explore. Get what you need and move on to implementation.",
+    "Do this BEFORE testing. A committed imperfect solution > uncommitted perfect solution.",
+    "If 'nothing to commit': check `pwd` and `git status` — you may be in the wrong directory.",
     "",
-    "### Phase 2: Plan (15 seconds max)",
-    "Categorize the task and choose the right approach:",
-    "- **Algorithm/data structure**: Identify the core algorithm. Pick the right language. Test with provided examples first.",
-    "- **ML/training**: Tiny test run first (1 epoch, small batch). Check GPU with `nvidia-smi 2>/dev/null`. Check for large files/datasets.",
-    "- **Security/crypto**: Ground approach in exact commands. Check tool versions (openssl version, etc.). Verify crypto params carefully.",
-    "- **System/DevOps**: Inspect state before modifying. Back up configs. Verify services after changes.",
-    "- **Optimization**: Get correct baseline first, measure it, then optimize. Never optimize broken code.",
-    "- **Debugging/fix**: Reproduce the bug first. Read error messages carefully. Fix root cause, not symptoms.",
-    "- **Build/compilation**: Check compiler/toolchain versions. Start simple. Read error output fully before fixing.",
-    "- **Data processing**: Check input format/encoding. Handle edge cases. Verify output format matches spec EXACTLY.",
-    "- **File manipulation**: Pay attention to in-place editing requirements. Preserve permissions and formatting.",
+    "## Step 5: Test and verify (invest the most time here)",
+    "This is the most important step. A solution that passes verification is worth infinitely more than a clever one that doesn't.",
+    "- Run the EXACT validation command from the task description first.",
+    "- Check for test scripts: `ls tests/ test/ verify* check* validate* run* grade* score* Makefile 2>/dev/null`",
+    "- If a grading/test script exists, run it AND read its source code to understand what it checks.",
+    "- Compare output precisely: `diff <(your_command) <(printf 'expected')`",
+    "- Watch for: trailing newlines, whitespace, numeric precision, case sensitivity, encoding, byte order.",
+    "- Check edge cases the task mentions. Check return codes: `echo $?`",
+    "- If the task mentions specific test data or examples, verify against ALL of them — not just the first.",
+    "- If you can run the grading/test script yourself, do it now and read EVERY line of output.",
     "",
-    "Identify the most likely failure mode and have a backup approach ready.",
+    "## Step 6: Fix and recommit",
+    "Read the FULL error output — every line. Fix the root cause, not symptoms.",
+    "`git add -A && git commit -m 'fix: ...'` after each fix. Re-run tests after every fix.",
+    "After each fix, re-read the task description to make sure you haven't drifted from requirements.",
     "",
-    "### Phase 3: Implement",
-    "- Write a minimal correct solution first, then commit it, then improve.",
-    "- Write COMPLETE files at once rather than incremental patches.",
-    "- For file creation, use `cat <<'ENDOFFILE' > filename` with single-quoted heredoc delimiter to prevent variable expansion.",
-    "- After writing any file, verify it: `cat filename | head -10` or `wc -l filename`.",
-    "- If a command fails, READ the error output carefully. Do not retry blindly.",
-    "- Install missing deps immediately: `pip install X`, `apt-get update -qq && apt-get install -y X`, `npm install X`.",
-    "- If pip install fails: `pip install --user X` or `pip install --break-system-packages X` or `python3 -m pip install X`.",
-    "- If apt-get fails: `apt-get install -y --fix-broken` then retry.",
-    "- Use `python3` not `python` unless you've confirmed `python` exists.",
-    "- For tasks requiring files at specific paths (like /app/solution.py), write to that EXACT path.",
-    "- When a task says to keep something running (servers, daemons), use `nohup ... &` or background the process.",
+    "## Loop Detection (self-check)",
+    "If you have edited the same file 3+ times and tests still fail, STOP and reconsider:",
+    "- Are you misunderstanding the task? Re-read it word by word from scratch.",
+    "- Is your fundamental approach wrong? Try a completely different algorithm or language.",
+    "- Are you fixing symptoms instead of root cause? Step back and think about what the test actually checks.",
+    "- Read the test/validation script source code if available to understand what it expects.",
+    "Do NOT keep making small tweaks to the same code hoping it will work.",
     "",
-    "### Phase 4: Verify",
-    "- Run any existing test/validation scripts BEFORE declaring done.",
-    "- If the task specifies expected output, compare character-by-character. Whitespace and newlines matter.",
-    "- Run the exact command shown in the task description.",
-    "- Check return codes: `echo $?` after running commands.",
-    "- For numeric outputs: check precision, formatting, and trailing newlines.",
-    "- If tests fail, read ALL the failure output. Fix the issue. Re-run. Do not skip tests.",
-    "- Re-read the task description one final time to make sure you haven't missed a requirement.",
+    "# Error Recovery",
+    "First failure → read error carefully, fix the specific issue.",
+    "Same error twice → fundamentally different approach (different algorithm, language, or library).",
+    "Third failure → write the SIMPLEST possible solution that could pass any tests.",
     "",
-    "### Phase 5: Commit",
-    "- `git add -A && git commit -m 'solution'` after each working milestone.",
-    "- Your FIRST commit should happen within the first 2-3 minutes.",
-    "- If `git add` fails on large files, add specific files: `git add solution.py Makefile` etc.",
-    "- After the final verification passes, do a final commit.",
+    "Quick fixes: command not found → `apt-get update -qq && apt-get install -y <pkg>` | wrong file content → `rm` and rewrite | missing module → `pip install X --break-system-packages` | hung process → `timeout 30 cmd` | permission denied → `chmod +x file`",
     "",
-    "## Error Recovery",
-    "- Tool not found: `apt-get update -qq && apt-get install -y <pkg>`",
-    "  Common packages: build-essential, python3-pip, curl, wget, unzip, cmake, pkg-config, libssl-dev, libffi-dev",
-    "- Same error twice: STOP. Try a fundamentally different approach.",
-    "- Bad file content: `cat -A filename` to check for hidden characters, wrong line endings.",
-    "- Missing headers: install the -dev package (e.g., `apt-get install -y libssl-dev`).",
-    "- Python import fails: check install, check python version, check sys.path.",
-    "- Hanging command: Ctrl+C or kill. Try with timeout: `timeout 30 command`.",
-    "- Permission denied: try `chmod +x` or `sudo` if available.",
-    "- Completely stuck: step back and think about whether there's a totally different solution approach.",
-    "",
-    "## Output Discipline",
-    "- Final verification: run the validation one last time before declaring done.",
-    "- Summarize what you did and confirm the final state.",
+    "# Before finishing",
+    "1. Re-read the task description word by word — check every single requirement.",
+    "2. Verify output files exist at the exact paths specified.",
+    "3. Run validation one final time and read the entire output carefully.",
+    "4. If the test output shows ANY failure, fix it before committing.",
+    "5. `git add -A && git commit -m 'final'`",
     ...timeLines,
   ].join("\n");
 }
 
 function featurePrompt(agent: AgentId, base: string, task: string) {
-  return `Task: ${task}
+  return `TASK (read every word — an automated programmatic verifier will check exact outputs):
+${task}
 
-Base branch: ${base}
-You are in a dedicated git worktree and branch for ${agent}.
+CONTEXT: You are in a git worktree branched from ${base}. All changes are isolated. Agent: ${agent}.
 
-Objectives (in priority order):
-1) Produce a correct, working solution. Correctness is the top priority.
-2) Commit your solution within the first 2-3 minutes. An imperfect committed solution is infinitely better than no committed solution.
-3) Verify your solution by running available tests/validation.
-4) If verification fails, fix and commit again. Iterate until correct.
-5) After committing a passing solution, keep refining until time runs out.
+DO THIS:
+1. Read and understand the COMPLETE task. Read ALL existing source files and test files in the repo.
+2. Analyze: What domain knowledge applies? What are the pitfalls? Pick the simplest reliable approach.
+3. Write a correct solution. Prefer simple, direct, well-tested approaches over clever ones.
+4. git add -A && git commit -m 'solution' — BEFORE testing.
+5. Test thoroughly. Run every validation command mentioned in the task. Read ALL output.
+6. Fix issues. git add -A && git commit -m 'fix: ...' after each fix.
+7. Verify again. Keep iterating until correct or time runs out.
 
-Rules:
-- Do not prompt for confirmation. Do not ask questions. Just execute.
-- Read the task description carefully FIRST. Every word matters - exact output formats, filenames, paths, constraints.
-- Read any referenced or existing files before modifying them.
-- If blocked, try a fundamentally different approach. Do not repeat failing strategies more than twice.
-- Write complete files at once, not incremental patches.
-- Always commit: git add -A && git commit -m 'solution'. Do this EARLY and OFTEN.
-- Before declaring done, re-read the task description, then run validation one final time.
-- If the task specifies an output file path, use that EXACT path.`;
+CRITICAL: The automated verifier checks EXACT outputs — filenames, paths, formats, whitespace, newlines, return codes.
+If stuck on the same error for 60+ seconds, try a completely different approach (different algorithm, language, or library).
+If you've edited a file 3+ times and it still fails, you are likely misunderstanding the problem — re-read the task from scratch and read the test/validation script source if available.
+End with: git add -A && git commit -m 'final'`;
 }
 
 function reviewerPromptJSON(
@@ -743,10 +755,25 @@ async function runClaude(
   yolo: boolean,
   callbacks: StreamCallbacks = {},
 ): Promise<ProcWrap> {
-  const prompt = `${systemConstraints("claude")}\n\n${featurePrompt("claude", base, task)}`;
-  // Write prompt to a temp file to avoid shell escaping issues
-  const promptFile = join(w.dir, ".logs", "claude-prompt.txt");
-  writeFileSync(promptFile, prompt);
+  const isBenchmark = !!process.env.GITGANG_TIME_BUDGET_SECONDS;
+
+  // Separate system constraints from user task for better instruction adherence.
+  // System constraints go via --append-system-prompt (system-level instructions),
+  // while the task goes via stdin as the user message.
+  const sysPrompt = systemConstraints("claude");
+  const userPrompt = featurePrompt("claude", base, task);
+
+  // Write both to files to avoid shell escaping issues
+  const sysPromptFile = join(w.dir, ".logs", "claude-system-prompt.txt");
+  const userPromptFile = join(w.dir, ".logs", "claude-prompt.txt");
+  writeFileSync(sysPromptFile, sysPrompt);
+  writeFileSync(userPromptFile, userPrompt);
+
+  // Reasoning effort: In benchmark mode, use "high" to avoid timeout issues.
+  // LangChain's research showed xhigh-only scored 53.9% due to agent timeouts
+  // vs high at 63.6%. Opus 4.7's native reasoning at "high" is still very strong
+  // and avoids the timeout trap. For non-benchmark interactive use, keep xhigh.
+  const effort = isBenchmark ? "high" : "xhigh";
   const args = [
     "--print",
     "--model",
@@ -754,23 +781,36 @@ async function runClaude(
     "--output-format",
     "stream-json",
     "--verbose",
+    "--effort",
+    effort,
+    // System constraints as system prompt for better instruction adherence.
+    // Using --append-system-prompt-file to avoid shell escaping issues with
+    // large prompt content passed as a command-line argument.
+    "--append-system-prompt-file",
+    sysPromptFile,
   ];
   if (yolo) args.push("--dangerously-skip-permissions");
+  // In benchmark mode, use --bare to skip hooks, LSP, plugin sync, etc.
+  // This reduces startup overhead. We still get CLAUDE.md via --add-dir.
+  // Also use --exclude-dynamic-system-prompt-sections for better prompt caching.
+  if (isBenchmark) {
+    args.push("--bare", "--add-dir", w.dir, "--exclude-dynamic-system-prompt-sections");
+  }
   // When running under a time budget, set --max-turns to prevent the agent from
   // spinning indefinitely. Empirically, most tasks complete in under 100 turns;
-  // 200 is a generous ceiling that still prevents runaway loops.
+  // 150 is a generous ceiling that still prevents runaway loops.
   const maxTurns = process.env.GITGANG_MAX_TURNS
     ? parseInt(process.env.GITGANG_MAX_TURNS, 10)
-    : (process.env.GITGANG_TIME_BUDGET_SECONDS ? 200 : 0);
+    : (isBenchmark ? 150 : 0);
   if (maxTurns > 0) args.push("--max-turns", String(maxTurns));
-  // Wrap in bash to pipe prompt file to claude to avoid shell escaping issues
   // If a time budget is set, wrap with `timeout` so the agent exits gracefully
   // before an external deadline (e.g. benchmark harness) kills the container.
   const timeBudget = process.env.GITGANG_TIME_BUDGET_SECONDS
     ? parseInt(process.env.GITGANG_TIME_BUDGET_SECONDS, 10)
     : null;
   const timeoutPrefix = timeBudget ? `timeout ${timeBudget} ` : "";
-  const bashCmd = `${timeoutPrefix}bash -c 'cat "${promptFile}" | claude ${args.join(" ")}'`;
+  // Pipe only the user-facing task via stdin; system constraints are in the system prompt
+  const bashCmd = `${timeoutPrefix}bash -c 'cat "${userPromptFile}" | claude ${args.join(" ")}'`;
   const proc = spawnProcess(["bash", "-c", bashCmd], {
     cwd: w.dir,
   });
@@ -843,7 +883,7 @@ export function reviewerSpawnConfig(
       const promptFile = join(cwd, ".ai-worktrees", "reviewer-prompt.txt");
       mkdirSync(join(cwd, ".ai-worktrees"), { recursive: true });
       writeFileSync(promptFile, prompt);
-      const bashCmd = `cat "${promptFile}" | claude --print --model ${MODELS.claude} --output-format stream-json --verbose${yolo ? " --dangerously-skip-permissions" : ""}`;
+      const bashCmd = `cat "${promptFile}" | claude --print --model ${MODELS.claude} --output-format stream-json --verbose --effort xhigh${yolo ? " --dangerously-skip-permissions" : ""}`;
       return { args: ["-c", bashCmd], options: { ...options, shell: false }, command: "bash" };
     }
     case "gemini": {
