@@ -138,7 +138,10 @@ Fire-and-forget: give a task, all three agents work in parallel, reviewer merges
 
 ```bash
 gg "Add user authentication with JWT tokens"
+gg --solo claude "Audit the auth flow and apply the fix directly"
 ```
+
+Use `--solo <agent>` when you want one agent to work alone. Solo mode skips the reviewer and multi-agent comparison loop, then auto-merges that agent's branch into the generated merge branch. If the agent succeeds and the merge is clean, the run exits with status 0.
 
 ### One-Shot Options
 
@@ -152,7 +155,7 @@ gg "Add user authentication with JWT tokens"
 | `--no-pr` | Skip GitHub PR creation | Creates PR by default |
 | `--agents` | Comma-separated agent list | `gemini,claude,codex` |
 | `--reviewer` | Which agent reviews | `codex` |
-| `--solo <agent>` | Run with only one agent | All three |
+| `--solo <agent>` | Run one agent only; skip reviewer/comparison and auto-merge its branch | All three |
 
 ## 📂 Session Management
 
