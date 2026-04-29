@@ -76,7 +76,10 @@ Fire-and-forget parallel execution with automatic merge:
 
 ```bash
 gg "Add user authentication" --agents gemini,claude,codex
+gg --solo claude "Add user authentication"   # single-agent run, no reviewer loop
 ```
+
+`--solo <agent>` runs only that agent, skips the reviewer loop, and auto-merges the resulting branch directly when the merge is clean.
 
 ## Session Management
 

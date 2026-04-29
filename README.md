@@ -153,6 +153,7 @@ gg "Add user authentication with JWT tokens"
 | `--agents` | Comma-separated agent list | `gemini,claude,codex` |
 | `--reviewer` | Which agent reviews | `codex` |
 | `--solo <agent>` | Run with only one agent | All three |
+Use `--solo claude` or `--solo codex` when you want a single-agent run: GitGang skips the reviewer loop, auto-merges that agent's branch directly, and exits 0 when the merge is clean.
 
 ## 📂 Session Management
 
