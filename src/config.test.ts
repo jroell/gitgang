@@ -165,8 +165,9 @@ describe("runInit — scaffolding", () => {
     expect(cfg.automerge).toBe("ask");
     expect(cfg.reviewer).toBe("codex");
     expect(cfg.heartbeatIntervalMs).toBe(30000);
+    expect(cfg.timeoutMs).toBe(1500000);
     expect(cfg.models?.gemini).toBe("gemini-3.1-pro-preview");
-    expect(cfg.models?.claude).toBe("claude-opus-4-6");
+    expect(cfg.models?.claude).toBe("claude-opus-4-7");
     expect(cfg.models?.codex).toBe("gpt-5.4");
   });
 
