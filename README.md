@@ -28,11 +28,11 @@ npm i -g gitgang@latest
 
 GitGang works with these AI CLI tools. Install the ones you plan to use:
 
-| CLI | Model | Required For |
+| CLI | Default model | Required For |
 |-----|-------|-------------|
-| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | Claude Opus 4 | Pair mode, interactive mode |
-| [Codex CLI](https://github.com/openai/codex) | GPT-5.4 | Pair mode, interactive mode |
-| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Gemini 2.5 Pro | Interactive mode |
+| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | Claude Opus 4.7 | Pair mode, interactive mode |
+| [Codex CLI](https://github.com/openai/codex) | GPT-5.5 | Pair mode, interactive mode |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Gemini 3.1 Pro | Interactive mode |
 
 - **Pair mode** requires at least 2 of: `claude`, `codex`
 - **Interactive mode** requires all 3: `gemini`, `claude`, `codex`
@@ -43,7 +43,8 @@ GitGang works with these AI CLI tools. Install the ones you plan to use:
 Pair mode is the flagship feature and the **default when you run bare `gg`**. One agent codes while another acts as a real-time reviewer — like having a senior engineer watching over your shoulder, catching mistakes before they compound.
 
 ```bash
-gg "implement JWT authentication middleware"          # pair mode (default)
+gg                                                    # prompts for a task, then pair mode (default)
+gg pair "implement JWT authentication middleware"     # pair mode with inline task
 gg pair --coder claude --reviewer codex "same task"   # explicit pair mode
 ```
 
@@ -220,12 +221,12 @@ gg init  # creates the config file
 {
   "automerge": "ask",
   "reviewer": "codex",
-  "timeoutMs": 1500000,
   "heartbeatIntervalMs": 30000,
+  "timeoutMs": 600000,
   "models": {
-    "gemini": "gemini-2.5-pro",
-    "claude": "claude-opus-4-6",
-    "codex": "gpt-5.4"
+    "gemini": "gemini-3.1-pro",
+    "claude": "claude-opus-4-7",
+    "codex": "gpt-5.5"
   }
 }
 ```

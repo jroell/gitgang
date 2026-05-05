@@ -59,6 +59,20 @@ node benchmarks/harness/run.mjs [--filter=<glob>] [--only-hard]
 node benchmarks/harness/score.mjs benchmarks/results/run-<timestamp>.json
 ```
 
+## Harbor / terminal-bench 2.0
+
+Use `benchmarks/harbor/gitgang_harbor_agent.py` when you want to run gitgang through Harbor against terminal-bench 2.0:
+
+```bash
+PYTHONPATH=benchmarks/harbor harbor run \
+  --dataset terminal-bench@2.0 \
+  --agent-import-path "gitgang_harbor_agent:GitgangAgent" \
+  --model claude-opus-4-7 \
+  -n 1
+```
+
+Under the hood, the Harbor agent installs gitgang with `npm ci --ignore-scripts`, bootstraps a `CLAUDE.md` file with the task and nearby test context before execution, then runs `gitgang --solo claude --yolo --no-pr`. If gitgang exits before using 40% of its budget, Harbor retries once with tail-output context so the verifier, not an early CLI exit, remains the source of truth.
+
 ## Honesty about stump rate
 
 The `expectedToStump` flag on each task is a prior, not empirical data. The
