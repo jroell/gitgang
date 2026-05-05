@@ -154,9 +154,9 @@ describe("generateRunReport", () => {
 
     const report = generateRunReport(opts, agentResults, agents as any, "approved", Date.now());
 
-    expect(report.models.gemini).toBe("gemini-3.1-pro-preview");
+    expect(report.models.gemini).toBe("gemini-3.1-pro");
     expect(report.models.claude).toBe("claude-opus-4-7");
-    expect(report.models.codex).toBe("gpt-5.4");
+    expect(report.models.codex).toBe("gpt-5.5");
 
     // Each agent report should also have its correct model
     for (const agent of report.agents) {
@@ -236,7 +236,7 @@ describe("writeRunReport", () => {
     expect(parsed.task).toBe("Test task");
     expect(parsed.outcome).toBe("approved");
     expect(parsed.agents).toHaveLength(3);
-    expect(MODELS.codex).toBe("gpt-5.4");
+    expect(MODELS.codex).toBe("gpt-5.5");
     expect(parsed.models.gemini).toBe(MODELS.gemini);
   });
 

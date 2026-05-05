@@ -669,7 +669,7 @@ describe("formatAgentLog", () => {
   test("renders exit_code as em-dash when null (e.g. spawn failure)", () => {
     const log = formatAgentLog({
       agent: "gemini",
-      model: "gemini-3.1-pro-preview",
+      model: "gemini-3.1-pro",
       turn: 1,
       status: "failed",
       exitCode: null,
@@ -689,7 +689,7 @@ describe("formatAgentLog", () => {
     const stdout = "line one\nline two\nline three";
     const log = formatAgentLog({
       agent: "codex",
-      model: "gpt-5.4",
+      model: "gpt-5.5",
       turn: 1,
       status: "ok",
       exitCode: 0,

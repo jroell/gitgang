@@ -65,7 +65,12 @@ class GitgangAgent(BaseInstalledAgent):
                 "    libsqlite3-dev libncurses5-dev libgdbm-dev libnss3-dev "
                 "    libbz2-dev liblzma-dev libxml2-dev libxslt1-dev "
                 "    unzip wget jq bc file xxd netcat-openbsd "
-                "    sqlite3 gawk flex bison; "
+                "    sqlite3 gawk flex bison "
+                # procps provides ps/top — many Docker images omit it,
+                # causing agent runtime crashes (ENOENT on ps).
+                "    procps; "
+                # Java JDK (best-effort — may not exist in all base images)
+                "  apt-get install -y --no-install-recommends default-jdk-headless 2>/dev/null || true; "
                 # NodeSource repo for Node 22 LTS
                 "  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -; "
                 "  apt-get install -y --no-install-recommends nodejs; "
@@ -122,6 +127,7 @@ class GitgangAgent(BaseInstalledAgent):
                 "  numpy scipy pandas matplotlib requests flask pytest "
                 "  pyyaml toml jsonschema cryptography pycryptodome "
                 "  beautifulsoup4 lxml pillow sympy networkx "
+                "  scikit-learn regex chardet "
                 "  2>&1 | tail -3 || true; "
                 "echo 'Python packages OK'"
             ),
@@ -255,14 +261,17 @@ class GitgangAgent(BaseInstalledAgent):
                 '  echo "# Environment Context (auto-generated)"; '
                 '  echo ""; '
                 '  echo "## CRITICAL INSTRUCTIONS"; '
-                '  echo "- This context was pre-gathered. DO NOT re-run discovery commands."; '
-                '  echo "- Read the task description below CAREFULLY — every word matters."; '
+                '  echo "- This context was pre-gathered. DO NOT re-run discovery commands — go straight to reading the task and test scripts."; '
+                '  echo "- The test/validation scripts below are GROUND TRUTH. Read them carefully — their assertions define correct behavior."; '
                 '  echo "- Read ALL existing source files and test files before writing any code."; '
                 '  echo "- Think first: what domain knowledge applies? What are the pitfalls? Pick the simplest reliable approach."; '
-                '  echo "- Commit EARLY: git add -A && git commit -m solution (before testing)."; '
+                '  echo "- Commit EARLY: cd \\$(git rev-parse --show-toplevel) && git add -A && git commit -m solution (before testing)."; '
                 '  echo "- Your work is verified by automated programmatic tests checking exact outputs."; '
+                '  echo "- Track your working directory with pwd. If the task uses absolute paths (like /app/), work there."; '
+                '  echo "- After writing files, verify: ls -la /path/to/file && head -5 /path/to/file"; '
                 '  echo "- If you edit the same file 3+ times and tests still fail, re-read the task and try a different approach."; '
-                '  echo "- If test/validation scripts exist, read their source code to understand what they check."; '
+                '  echo "- Compare actual vs expected output byte-for-byte when tests fail: diff, xxd, repr()."; '
+                '  echo "- If a task needs a server/daemon: start it, verify it responds, THEN commit."; '
                 '  echo ""; '
                 # Task description FIRST — this is the most important context
                 '  echo "## Task Description"; '
@@ -272,6 +281,24 @@ class GitgangAgent(BaseInstalledAgent):
                 '  echo "\\`\\`\\`"; '
                 "  ls -la tests/ test/ verify* check* validate* run_tests* run* grade* score* Makefile 2>/dev/null | head -20 || echo '(none found)'; "
                 '  echo "\\`\\`\\`"; '
+                '  echo ""; '
+                '  echo "## Test Script Contents (GROUND TRUTH — read carefully)"; '
+                # Include the actual source of test/validation scripts so the agent
+                # doesn't need to spend turns reading them during execution.
+                "  for f in $(find . -maxdepth 2 -name 'test_*' -o -name '*_test.*' -o -name 'verify*' -o -name 'check*' -o -name 'validate*' -o -name 'grade*' -o -name 'score*' 2>/dev/null | head -5); do "
+                '    echo "### $f"; '
+                '    echo "\\`\\`\\`"; '
+                "    cat \"$f\" 2>/dev/null | head -150; "
+                '    echo "\\`\\`\\`"; '
+                '    echo ""; '
+                "  done; "
+                # Also include Makefile test targets if present
+                "  if [ -f Makefile ]; then "
+                '    echo "### Makefile (test targets)"; '
+                '    echo "\\`\\`\\`"; '
+                "    grep -A5 'test\\|check\\|verify\\|grade' Makefile 2>/dev/null | head -40 || true; "
+                '    echo "\\`\\`\\`"; '
+                "  fi; "
                 '  echo ""; '
                 '  echo "## Working Directory"; '
                 '  echo "\\`$(pwd)\\`"; '
@@ -325,17 +352,89 @@ class GitgangAgent(BaseInstalledAgent):
             env=env,
         )
 
-        # ── Run gitgang ──
-        # The run command is wrapped so it always exits 0. Harbor raises
-        # NonZeroAgentExitCodeError for non-zero exits, but we want the
-        # verifier (reward) to be the sole arbiter of success.
-        await self.exec_as_agent(
-            environment,
-            command=(
-                'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/go/bin:$PATH"; '
-                f"gitgang --solo claude --yolo --no-pr {model_flag}"
-                f"-- {escaped_instruction} "
-                f"2>&1 | tee /logs/agent/gitgang.txt; exit 0"
-            ),
-            env=env,
-        )
+        # ── Run gitgang (with retry-on-early-exit) ──
+        # If the agent exits before using 40% of its time budget, it likely
+        # hit an error or misunderstood the task. We retry with additional
+        # context about the failure so it can take a different approach.
+        # Harbor's verifier (reward) is the sole arbiter of success.
+        MAX_RETRIES = 1  # At most one retry to avoid wasting the entire budget
+        retry_context = ""
+
+        for attempt in range(MAX_RETRIES + 1):
+            attempt_label = f"(attempt {attempt + 1}/{MAX_RETRIES + 1})" if attempt > 0 else ""
+            retry_prefix = ""
+            if retry_context:
+                # On retry, prepend context about the previous failure
+                retry_prefix = (
+                    f"IMPORTANT CONTEXT: A previous attempt at this task FAILED. "
+                    f"Here is what went wrong:\\n{retry_context}\\n\\n"
+                    f"Take a COMPLETELY DIFFERENT approach this time. "
+                    f"Re-read the task and test scripts from scratch. "
+                    f"Do NOT repeat the same mistake.\\n\\n"
+                )
+
+            retry_instruction = f"{retry_prefix}{escaped_instruction}" if retry_prefix else escaped_instruction
+
+            # Calculate remaining time budget for this attempt
+            remaining_budget = time_budget_sec if attempt == 0 else int(time_budget_sec * 0.55)
+
+            attempt_env = {**env, "GITGANG_TIME_BUDGET_SECONDS": str(remaining_budget)}
+
+            result = await self.exec_as_agent(
+                environment,
+                command=(
+                    'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/go/bin:$PATH"; '
+                    f"START_TIME=$(date +%s); "
+                    f"gitgang --solo claude --yolo --no-pr {model_flag}"
+                    f"-- {retry_instruction} "
+                    f"2>&1 | tee /logs/agent/gitgang_{attempt}.txt; "
+                    f"EXIT_CODE=$?; "
+                    f"END_TIME=$(date +%s); "
+                    f"ELAPSED=$((END_TIME - START_TIME)); "
+                    # Write timing info for retry decision
+                    f"echo \"GITGANG_ELAPSED=$ELAPSED\" > /tmp/gitgang_timing_{attempt}.txt; "
+                    f"echo \"GITGANG_EXIT=$EXIT_CODE\" >> /tmp/gitgang_timing_{attempt}.txt; "
+                    f"exit 0"
+                ),
+                env=attempt_env,
+            )
+
+            # Check if we should retry: read timing info and decide
+            if attempt < MAX_RETRIES:
+                timing_result = await self.exec_as_agent(
+                    environment,
+                    command=(
+                        f"cat /tmp/gitgang_timing_{attempt}.txt 2>/dev/null || echo 'GITGANG_ELAPSED={remaining_budget}'; "
+                        # Also capture last 30 lines of output for retry context
+                        f"echo '---TAIL---'; "
+                        f"tail -30 /logs/agent/gitgang_{attempt}.txt 2>/dev/null || true"
+                    ),
+                    env=env,
+                )
+
+                # Parse timing — if elapsed < 40% of budget, agent likely failed early
+                elapsed = remaining_budget  # default: assume full budget used
+                tail_output = ""
+                if timing_result and hasattr(timing_result, 'output'):
+                    output = timing_result.output or ""
+                    for line in output.split('\n'):
+                        if line.startswith('GITGANG_ELAPSED='):
+                            try:
+                                elapsed = int(line.split('=')[1])
+                            except (ValueError, IndexError):
+                                pass
+                    if '---TAIL---' in output:
+                        tail_output = output.split('---TAIL---', 1)[1].strip()[:500]
+
+                # Only retry if agent used less than 40% of its time budget
+                # (indicating early exit/crash rather than legitimate completion)
+                threshold = int(remaining_budget * 0.40)
+                if elapsed < threshold and tail_output:
+                    retry_context = (
+                        f"The agent exited after only {elapsed}s of {remaining_budget}s budget. "
+                        f"Last output:\\n{tail_output}"
+                    )
+                    continue  # Retry with context
+                else:
+                    break  # Agent used significant time — don't retry
+            # else: last attempt, no more retries

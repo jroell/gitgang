@@ -91,7 +91,7 @@ describe("buildOrchestratorInput", () => {
     const agents: AgentResult[] = [
       {
         id: "gemini",
-        model: "gemini-3.1-pro-preview",
+        model: "gemini-3.1-pro",
         status: "ok",
         branch: "agents/gemini/turn-3",
         stdoutTail: "gemini says X",
@@ -109,7 +109,7 @@ describe("buildOrchestratorInput", () => {
       },
       {
         id: "codex",
-        model: "gpt-5.4",
+        model: "gpt-5.5",
         status: "failed",
         branch: "agents/codex/turn-3",
         stdoutTail: "error",

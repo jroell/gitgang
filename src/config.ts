@@ -96,9 +96,9 @@ export const DEFAULT_CONFIG_CONTENT = `{
   "heartbeatIntervalMs": 30000,
   "timeoutMs": 600000,
   "models": {
-    "gemini": "gemini-3.1-pro-preview",
-    "claude": "claude-opus-4-6",
-    "codex": "gpt-5.4"
+    "gemini": "gemini-3.1-pro",
+    "claude": "claude-opus-4-7",
+    "codex": "gpt-5.5"
   }
 }
 `;

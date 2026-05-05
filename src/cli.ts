@@ -169,9 +169,9 @@ interface ReviewerDecision {
 }
 
 const DEFAULT_MODELS: Record<AgentId, string> = {
-  gemini: "gemini-3.1-pro-preview",
+  gemini: "gemini-3.1-pro",
   claude: "claude-opus-4-7",
-  codex: "gpt-5.4",
+  codex: "gpt-5.5",
 };
 
 /**
@@ -381,6 +381,9 @@ function systemConstraints(agent: AgentId) {
     "4. Match exact specifications: filenames, paths, output formats, whitespace, newlines.",
     "5. Your work will be measured by automated programmatic tests. Code must be testable and produce exact expected outputs.",
     "6. Read ALL existing source files, test files, and validation scripts before writing code. They reveal exact expected behavior.",
+    "7. Track your working directory. Run `pwd` before and after major operations. If the task specifies an absolute path like `/app/`, work there. Never accidentally write files to the wrong directory.",
+    "8. When tests fail, compare your ACTUAL output against EXPECTED output byte-for-byte. Use `diff`, `xxd`, or `python3 -c \"print(repr(open('file').read()))\"` to see hidden characters.",
+    "9. If a task requires a server/daemon, test it end-to-end: start it, verify it responds (`curl`/`nc`), THEN commit. Don't commit untested server code.",
     "",
     "# Workflow: Read → Analyze → Code → Commit → Test → Fix → Commit",
     "",
@@ -388,8 +391,10 @@ function systemConstraints(agent: AgentId) {
     "Read TASK.md / task.md / task.txt / README.md thoroughly. Then read ALL source files the task references or that already exist in the repo. Identify:",
     "- Exact output format, file paths, and expected behavior",
     "- Edge cases, constraints, and special requirements",
-    "- Available test/validation scripts (check tests/ test/ verify* check* validate* Makefile). READ THEIR SOURCE CODE to understand what 'correct' means.",
-    "- Expected output: what does 'correct' look like? If examples are given, note the exact format.",
+    "- Available test/validation scripts (check tests/ test/ verify* check* validate* Makefile). READ THEIR FULL SOURCE CODE — the assertions reveal what 'correct' means.",
+    "- Expected output: what does 'correct' look like? If examples are given, note the exact format (whitespace, newlines, precision).",
+    "- What directory should your output files be in? Check if paths are absolute (like /app/) or relative.",
+    "- CRITICAL: The test/validation script is the GROUND TRUTH. If the task description is ambiguous, the test script's assertions are the definitive specification. Read it thoroughly.",
     "",
     "If CLAUDE.md exists with environment context, use it — skip redundant discovery commands.",
     "Otherwise run ONE command to survey:",
@@ -404,6 +409,9 @@ function systemConstraints(agent: AgentId) {
     "- What is the simplest correct approach? Consider 2 approaches and pick the most reliable one.",
     "- What does the test/validation script actually check? Match THAT, not just your interpretation of the task.",
     "- If existing code/tests are in the repo, read them first — they reveal expected interfaces and behavior.",
+    "- What output format does the verifier expect? Exact bytes matter: trailing newlines, encoding, numeric precision.",
+    "- Are there HIDDEN requirements in the test assertions? (e.g., specific return codes, stderr vs stdout, file permissions)",
+    "- If the task involves I/O: what is the EXACT expected output? Trace through the test script's assertions line by line.",
     "This step is short (<30 seconds) but prevents wasting time on wrong approaches.",
     "",
     "## Step 3: Write code",
@@ -415,18 +423,19 @@ function systemConstraints(agent: AgentId) {
     "Dependencies (install immediately, don't defer):",
     "- Python: `pip install X --break-system-packages 2>/dev/null || pip3 install X --user`",
     "- System: `apt-get update -qq && apt-get install -y X 2>/dev/null`",
-    "- Node: `npm install X` | Rust: ensure `$HOME/.cargo/bin` is in PATH",
+    "- Node: `npm install X` | Rust: ensure `$HOME/.cargo/bin` is in PATH | Go: ensure `$HOME/go/bin` is in PATH",
     "- Always use `python3` (never bare `python`). Use `python3 -m venv` if isolation needed.",
     "",
     "Path discipline: if the task says `/app/solution.py`, write to `/app/solution.py`. Use `mkdir -p` first.",
+    "After writing files, verify they exist: `ls -la /path/to/file && head -5 /path/to/file`",
     "Servers/daemons: `nohup command > /dev/null 2>&1 &` then verify with `curl` or `nc -z localhost PORT`.",
     "",
     "## Step 4: Commit IMMEDIATELY",
     "```bash",
-    "git add -A && git commit -m 'solution'",
+    "cd $(git rev-parse --show-toplevel) && git add -A && git commit -m 'solution'",
     "```",
     "Do this BEFORE testing. A committed imperfect solution > uncommitted perfect solution.",
-    "If 'nothing to commit': check `pwd` and `git status` — you may be in the wrong directory.",
+    "If 'nothing to commit': check `pwd` and `git status` — you may be in the wrong directory or the git repo root differs from your working directory.",
     "",
     "## Step 5: Test and verify (invest the most time here)",
     "This is the most important step. A solution that passes verification is worth infinitely more than a clever one that doesn't.",
@@ -438,10 +447,11 @@ function systemConstraints(agent: AgentId) {
     "- Check edge cases the task mentions. Check return codes: `echo $?`",
     "- If the task mentions specific test data or examples, verify against ALL of them — not just the first.",
     "- If you can run the grading/test script yourself, do it now and read EVERY line of output.",
+    "- If test output is long, DON'T skip reading it. Every line could reveal a failure pattern.",
     "",
     "## Step 6: Fix and recommit",
     "Read the FULL error output — every line. Fix the root cause, not symptoms.",
-    "`git add -A && git commit -m 'fix: ...'` after each fix. Re-run tests after every fix.",
+    "`cd $(git rev-parse --show-toplevel) && git add -A && git commit -m 'fix: ...'` after each fix. Re-run tests after every fix.",
     "After each fix, re-read the task description to make sure you haven't drifted from requirements.",
     "",
     "## Loop Detection (self-check)",
@@ -450,21 +460,30 @@ function systemConstraints(agent: AgentId) {
     "- Is your fundamental approach wrong? Try a completely different algorithm or language.",
     "- Are you fixing symptoms instead of root cause? Step back and think about what the test actually checks.",
     "- Read the test/validation script source code if available to understand what it expects.",
+    "- Check your working directory: `pwd` — are files ending up in the right place?",
     "Do NOT keep making small tweaks to the same code hoping it will work.",
     "",
     "# Error Recovery",
     "First failure → read error carefully, fix the specific issue.",
     "Same error twice → fundamentally different approach (different algorithm, language, or library).",
     "Third failure → write the SIMPLEST possible solution that could pass any tests.",
-    "",
-    "Quick fixes: command not found → `apt-get update -qq && apt-get install -y <pkg>` | wrong file content → `rm` and rewrite | missing module → `pip install X --break-system-packages` | hung process → `timeout 30 cmd` | permission denied → `chmod +x file`",
+    "Command not found → install it: `apt-get update -qq && apt-get install -y <pkg> 2>/dev/null || true`",
+    "Wrong file content → `rm` and rewrite from scratch (don't patch).",
+    "Missing Python module → `pip install X --break-system-packages 2>/dev/null`",
+    "Hung process → `timeout 45 cmd` | Permission denied → `chmod +x file`",
+    "Import error / version mismatch → check what's actually installed: `python3 -c 'import X; print(X.__version__)'`",
+    "Test expects specific output format → use `diff <(your_cmd) <(printf 'expected')` to compare byte-by-byte.",
+    "Encoding issues → check: `file output.txt`, `xxd output.txt | head`, ensure UTF-8 without BOM.",
+    "Numeric precision → match EXACTLY what the test expects (e.g. '3.14' not '3.140000').",
     "",
     "# Before finishing",
     "1. Re-read the task description word by word — check every single requirement.",
-    "2. Verify output files exist at the exact paths specified.",
-    "3. Run validation one final time and read the entire output carefully.",
-    "4. If the test output shows ANY failure, fix it before committing.",
-    "5. `git add -A && git commit -m 'final'`",
+    "2. Verify output files exist at the exact paths specified: `ls -la /exact/path/to/file`",
+    "3. Verify output FORMAT matches expectations: check trailing newlines (`wc -c file`), encoding, numeric precision.",
+    "4. Run validation one final time and read the ENTIRE output carefully — every line.",
+    "5. If the test output shows ANY failure, fix it before committing. Do not proceed with failures.",
+    "6. If tests pass, verify one more time from scratch: `cd $(git rev-parse --show-toplevel) && bash -c '<test_command>'`",
+    "7. `cd $(git rev-parse --show-toplevel) && git add -A && git commit -m 'final'`",
     ...timeLines,
   ].join("\n");
 }
@@ -476,18 +495,19 @@ ${task}
 CONTEXT: You are in a git worktree branched from ${base}. All changes are isolated. Agent: ${agent}.
 
 DO THIS:
-1. Read and understand the COMPLETE task. Read ALL existing source files and test files in the repo.
-2. Analyze: What domain knowledge applies? What are the pitfalls? Pick the simplest reliable approach.
-3. Write a correct solution. Prefer simple, direct, well-tested approaches over clever ones.
-4. git add -A && git commit -m 'solution' — BEFORE testing.
-5. Test thoroughly. Run every validation command mentioned in the task. Read ALL output.
-6. Fix issues. git add -A && git commit -m 'fix: ...' after each fix.
+1. Read and understand the COMPLETE task. Read ALL existing source files and test files in the repo. Run \`pwd\` to know your working directory.
+2. Analyze: What domain knowledge applies? What are the pitfalls? Pick the simplest reliable approach. What does the verifier actually check?
+3. Write a correct solution. Prefer simple, direct, well-tested approaches over clever ones. Verify files exist after writing: \`ls -la /path/to/file\`.
+4. \`cd $(git rev-parse --show-toplevel) && git add -A && git commit -m 'solution'\` — BEFORE testing.
+5. Test thoroughly. Run every validation command mentioned in the task. Read ALL output — every line.
+6. Fix issues. \`cd $(git rev-parse --show-toplevel) && git add -A && git commit -m 'fix: ...'\` after each fix.
 7. Verify again. Keep iterating until correct or time runs out.
 
 CRITICAL: The automated verifier checks EXACT outputs — filenames, paths, formats, whitespace, newlines, return codes.
 If stuck on the same error for 60+ seconds, try a completely different approach (different algorithm, language, or library).
 If you've edited a file 3+ times and it still fails, you are likely misunderstanding the problem — re-read the task from scratch and read the test/validation script source if available.
-End with: git add -A && git commit -m 'final'`;
+Check your working directory (\`pwd\`) before writing files — ensure they end up at the paths the task specifies.
+End with: cd $(git rev-parse --show-toplevel) && git add -A && git commit -m 'final'`;
 }
 
 function reviewerPromptJSON(
@@ -769,11 +789,12 @@ async function runClaude(
   writeFileSync(sysPromptFile, sysPrompt);
   writeFileSync(userPromptFile, userPrompt);
 
-  // Reasoning effort: In benchmark mode, use "high" to avoid timeout issues.
-  // LangChain's research showed xhigh-only scored 53.9% due to agent timeouts
-  // vs high at 63.6%. Opus 4.7's native reasoning at "high" is still very strong
-  // and avoids the timeout trap. For non-benchmark interactive use, keep xhigh.
-  const effort = isBenchmark ? "high" : "xhigh";
+  // Reasoning effort: Opus 4.7 improved xhigh performance substantially and
+  // added native self-verification. The timeout issues that caused LangChain to
+  // downgrade to "high" were on Opus 4.6. With Opus 4.7, xhigh is both the
+  // default and the recommended level for coding/agentic use cases, and
+  // produces measurably better scores than high on complex reasoning tasks.
+  const effort = "xhigh";
   const args = [
     "--print",
     "--model",

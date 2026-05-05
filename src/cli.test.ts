@@ -293,9 +293,9 @@ describe("Model configuration", () => {
   });
 
   test("DEFAULT_MODELS contains expected default values", () => {
-    expect(DEFAULT_MODELS.gemini).toBe("gemini-3.1-pro-preview");
+    expect(DEFAULT_MODELS.gemini).toBe("gemini-3.1-pro");
     expect(DEFAULT_MODELS.claude).toBe("claude-opus-4-7");
-    expect(DEFAULT_MODELS.codex).toBe("gpt-5.4");
+    expect(DEFAULT_MODELS.codex).toBe("gpt-5.5");
   });
 
   test("resolveModels returns defaults when no env vars set", () => {
