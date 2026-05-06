@@ -59,6 +59,19 @@ node benchmarks/harness/run.mjs [--filter=<glob>] [--only-hard]
 node benchmarks/harness/score.mjs benchmarks/results/run-<timestamp>.json
 ```
 
+## Harbor / terminal-bench 2.0 runner
+
+The Harbor adapter lives at `benchmarks/harbor/gitgang_harbor_agent.py` and runs `gitgang --solo claude` inside the terminal-bench container.
+
+Before each run it bootstraps a `CLAUDE.md` file with the task text, discovered test/validation scripts, selected script contents, and a quick environment snapshot. That preloaded context is intentional: it lets the agent start from the verifier and repo constraints instead of burning turns on rediscovery.
+
+The runner also hardens benchmark execution in two ways:
+
+- if gitgang exits before using 40% of its allotted time budget, Harbor retries once with the tail of the failed run prepended as failure context and a reduced remaining budget
+- the system constraints explicitly tell the agent to compare actual vs expected output byte-for-byte and to do a final format check before finishing
+
+Use this path when you want terminal-bench 2.0 style runs rather than the local `benchmarks/harness/*.mjs` harness.
+
 ## Honesty about stump rate
 
 The `expectedToStump` flag on each task is a prior, not empirical data. The

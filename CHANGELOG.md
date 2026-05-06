@@ -16,6 +16,13 @@
 
 **Tests**: 555 passing (+4 new assertions covering the new defaults and relaxed pair parsing).
 
+**Benchmark / terminal-bench hardening**
+
+- The Harbor benchmark agent now bootstraps `CLAUDE.md` with the task text, discovered test/validation scripts, and a compact environment snapshot before starting `gitgang`, so the solo Claude run begins with verifier context already loaded.
+- Early exits in the Harbor benchmark flow now get one automatic retry: if `gitgang --solo claude` exits before using 40% of its time budget, the runner prepends tail output from the failed attempt and asks for a different approach on retry.
+- Benchmark/system constraints now explicitly require byte-for-byte output inspection (`diff`, `xxd`, `repr(...)`) on failures and a final output-format verification pass before finishing.
+- Built-in multi-agent defaults and the `gg init` scaffolded config now use `gemini-3.1-pro`, `claude-opus-4-7`, and `gpt-5.5`.
+
 ## v1.8.1 — 2026-04-15
 
 Non-git Q&A mode — gitgang now works like Claude Code: you can run `gg -i` from any directory, not just git repos.
