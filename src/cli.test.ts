@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { mkdirSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -28,6 +28,10 @@ import {
   spawnProcess,
   formatSessionsList,
   formatSessionShow,
+  bootstrapClaudeMd,
+  detectProjectHints,
+  findTestScripts,
+  extractMakefileTestTargets,
   type SessionSummary,
 } from "./cli";
 
@@ -1382,5 +1386,185 @@ describe("--json flag parsing", () => {
   test("doctor without --json sets json=false", () => {
     const p = parseArgs(["doctor"]);
     expect(p.subcommand).toEqual({ kind: "doctor", json: false });
+  });
+});
+
+describe("CLAUDE.md bootstrap", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = createTempDir();
+  });
+
+  afterEach(() => {
+    cleanup(tmpDir);
+  });
+
+  test("bootstrapClaudeMd creates CLAUDE.md with test scripts", () => {
+    // Create a test script
+    writeFileSync(join(tmpDir, "test_solution.py"), 'assert 1 + 1 == 2\nprint("ok")');
+    bootstrapClaudeMd(tmpDir);
+    const content = readFileSync(join(tmpDir, "CLAUDE.md"), "utf-8");
+    expect(content).toContain("Environment Context");
+    expect(content).toContain("GROUND TRUTH");
+    expect(content).toContain("test_solution.py");
+    expect(content).toContain("assert 1 + 1 == 2");
+  });
+
+  test("bootstrapClaudeMd does not overwrite existing CLAUDE.md", () => {
+    writeFileSync(join(tmpDir, "CLAUDE.md"), "existing content");
+    writeFileSync(join(tmpDir, "test_foo.sh"), "echo test");
+    bootstrapClaudeMd(tmpDir);
+    const content = readFileSync(join(tmpDir, "CLAUDE.md"), "utf-8");
+    expect(content).toBe("existing content");
+  });
+
+  test("bootstrapClaudeMd does not create file without useful content", () => {
+    // Empty dir — no test scripts, no project files
+    bootstrapClaudeMd(tmpDir);
+    expect(existsSync(join(tmpDir, "CLAUDE.md"))).toBe(false);
+  });
+
+  test("bootstrapClaudeMd includes Makefile test targets", () => {
+    writeFileSync(join(tmpDir, "Makefile"), "test:\n\tpython3 -m pytest\n\nclean:\n\trm -rf dist");
+    bootstrapClaudeMd(tmpDir);
+    const content = readFileSync(join(tmpDir, "CLAUDE.md"), "utf-8");
+    expect(content).toContain("Makefile Test Targets");
+    expect(content).toContain("python3 -m pytest");
+  });
+});
+
+describe("detectProjectHints", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = createTempDir();
+  });
+
+  afterEach(() => {
+    cleanup(tmpDir);
+  });
+
+  test("detects Rust project", () => {
+    writeFileSync(join(tmpDir, "Cargo.toml"), "[package]\nname = \"test\"");
+    const hints = detectProjectHints(tmpDir);
+    expect(hints.some((h) => h.includes("Rust"))).toBe(true);
+  });
+
+  test("detects Go project", () => {
+    writeFileSync(join(tmpDir, "go.mod"), "module example.com/test");
+    const hints = detectProjectHints(tmpDir);
+    expect(hints.some((h) => h.includes("Go"))).toBe(true);
+  });
+
+  test("detects Python project", () => {
+    writeFileSync(join(tmpDir, "requirements.txt"), "flask==2.0");
+    const hints = detectProjectHints(tmpDir);
+    expect(hints.some((h) => h.includes("Python"))).toBe(true);
+  });
+
+  test("detects Node project", () => {
+    writeFileSync(join(tmpDir, "package.json"), '{"name":"test"}');
+    const hints = detectProjectHints(tmpDir);
+    expect(hints.some((h) => h.includes("Node"))).toBe(true);
+  });
+
+  test("returns empty for unknown project type", () => {
+    const hints = detectProjectHints(tmpDir);
+    expect(hints).toHaveLength(0);
+  });
+});
+
+describe("findTestScripts", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = createTempDir();
+  });
+
+  afterEach(() => {
+    cleanup(tmpDir);
+  });
+
+  test("finds test scripts matching patterns", () => {
+    writeFileSync(join(tmpDir, "test_main.py"), "pass");
+    writeFileSync(join(tmpDir, "verify.sh"), "echo ok");
+    writeFileSync(join(tmpDir, "main.py"), "pass"); // not a test
+    const results = findTestScripts(tmpDir, ["test_", "verify"]);
+    expect(results.length).toBe(2);
+    const names = results.map((r) => r.relative);
+    expect(names).toContain("test_main.py");
+    expect(names).toContain("verify.sh");
+  });
+
+  test("respects max file limit", () => {
+    for (let i = 0; i < 15; i++) {
+      writeFileSync(join(tmpDir, `test_${i}.py`), `# test ${i}`);
+    }
+    const results = findTestScripts(tmpDir, ["test_"]);
+    expect(results.length).toBeLessThanOrEqual(10);
+  });
+
+  test("searches in test subdirectories", () => {
+    mkdirSync(join(tmpDir, "tests"), { recursive: true });
+    writeFileSync(join(tmpDir, "tests", "test_unit.py"), "pass");
+    const results = findTestScripts(tmpDir, ["test_"]);
+    expect(results.length).toBe(1);
+    expect(results[0].relative).toBe(join("tests", "test_unit.py"));
+  });
+});
+
+describe("extractMakefileTestTargets", () => {
+  test("extracts test target and commands", () => {
+    const content = "all:\n\tgcc main.c\n\ntest:\n\t./run_tests\n\t./verify\n\nclean:\n\trm -f *.o";
+    const result = extractMakefileTestTargets(content);
+    expect(result).toContain("test:");
+    expect(result).toContain("./run_tests");
+    expect(result).toContain("./verify");
+    expect(result).not.toContain("clean:");
+  });
+
+  test("returns null when no test targets", () => {
+    const content = "all:\n\tgcc main.c\n\nclean:\n\trm -f *.o";
+    const result = extractMakefileTestTargets(content);
+    expect(result).toBeNull();
+  });
+
+  test("extracts check and validate targets", () => {
+    const content = "check:\n\tpython3 -m pytest\n\nvalidate:\n\t./validate.sh";
+    const result = extractMakefileTestTargets(content);
+    expect(result).toContain("check:");
+    expect(result).toContain("validate:");
+  });
+});
+
+describe("systemConstraints improvements", () => {
+  test("includes planning step", () => {
+    const prompt = systemConstraints("claude");
+    expect(prompt).toContain("Step 0: Survey");
+    expect(prompt).toContain("Step 1: Plan");
+  });
+
+  test("includes batch file reading advice", () => {
+    const prompt = systemConstraints("claude");
+    expect(prompt).toContain("Batch file reads");
+  });
+
+  test("includes long-running command guidance", () => {
+    const prompt = systemConstraints("claude");
+    expect(prompt).toContain("Long-running commands");
+  });
+});
+
+describe("featurePrompt improvements", () => {
+  test("includes survey step", () => {
+    const prompt = featurePrompt("claude", "main", "fix the bug");
+    expect(prompt).toContain("SURVEY");
+    expect(prompt).toContain("PLAN");
+  });
+
+  test("includes CLAUDE.md awareness", () => {
+    const prompt = featurePrompt("claude", "main", "fix the bug");
+    expect(prompt).toContain("CLAUDE.md");
   });
 });
