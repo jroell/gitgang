@@ -71,7 +71,9 @@ const ROUND_COMPLETION_TIMEOUT_MS = 15 * 60 * 1000; // Force reviewer after 15 m
 const POST_TIMEOUT_GRACE_MS = 3 * 1000; // Allow short grace after round timeout for just-landing results
 const MAX_AGENT_BACKOFF_MS = 2 * 60 * 1000;
 const EARLY_EXIT_THRESHOLD = 0.40; // If agent exits before 40% of time budget, consider retrying
+const LATE_EXIT_TEST_THRESHOLD = 0.85; // If agent exits before 85% of budget, run post-exit test check
 const MAX_EARLY_EXIT_RETRIES = 1; // Only 1 early-exit retry to avoid wasting the budget
+const MAX_TEST_FAILURE_RETRIES = 1; // Retry once if tests fail on normal exit
 const REVIEWER_MAX_RETRIES = 3;
 const REVIEWER_TIMEOUT_MS = Number(process.env.GITGANG_REVIEWER_TIMEOUT_MS ?? 15 * 60 * 1000); // 15 minutes default, override via env
 const DEFAULT_POST_MERGE_CHECKS: string[] = [];
@@ -486,14 +488,26 @@ function systemConstraints(agent: AgentId) {
     "Linker errors → check library paths, missing `-l` flags, wrong library versions.",
     "Segfault / core dump → use `valgrind` or add print statements to narrow down the crash location.",
     "",
-    "# Before finishing",
-    "1. Re-read the task description word by word — check every single requirement.",
-    "2. Verify output files exist at the exact paths specified: `ls -la /exact/path/to/file`",
-    "3. Verify output FORMAT matches expectations: check trailing newlines (`wc -c file`), encoding, numeric precision.",
-    "4. Run validation one final time and read the ENTIRE output carefully — every line.",
-    "5. If the test output shows ANY failure, fix it before committing. Do not proceed with failures.",
-    "6. If tests pass, verify one more time from scratch in a clean subshell: `cd $(git rev-parse --show-toplevel) && bash -c '<test_command>'`",
-    "7. `cd $(git rev-parse --show-toplevel) && git add -A && git commit -m 'final'`",
+    "# MANDATORY Pre-Completion Checklist (do NOT skip any step)",
+    "Before you declare yourself done, you MUST complete EVERY item on this checklist.",
+    "If you skip any item, you will fail the task. This is not optional.",
+    "",
+    "1. STOP and re-read the ENTIRE task description word by word. List each requirement mentally.",
+    "2. For EACH requirement, verify you addressed it. If you missed one, go back and fix it now.",
+    "3. Verify ALL output files exist at the EXACT paths specified: `ls -la /exact/path/to/file`",
+    "4. Verify output FORMAT: check trailing newlines (`wc -c file`), encoding (`file output.txt`), numeric precision.",
+    "5. Run EVERY test/validation script found in the repo. Read the ENTIRE output — every single line.",
+    "   ```bash",
+    "   # Run all validation scripts",
+    "   for f in $(find . -maxdepth 2 -name 'test_*' -o -name '*_test.*' -o -name '*.test.*' -o -name 'verify*' -o -name 'check*' -o -name 'validate*' -o -name 'grade*' -o -name 'score*' 2>/dev/null); do echo \"=== Running $f ===\"; chmod +x \"$f\" 2>/dev/null; bash \"$f\" 2>&1; echo \"Exit: $?\"; done",
+    "   # Also run standard test commands if applicable",
+    "   make test 2>&1 || npm test 2>&1 || cargo test 2>&1 || go test ./... 2>&1 || python3 -m pytest 2>&1 || true",
+    "   ```",
+    "6. If ANY test shows a failure, STOP. Fix the failure. Then re-run from step 5.",
+    "7. When all tests pass, verify ONE MORE TIME from a clean subshell:",
+    "   `cd $(git rev-parse --show-toplevel) && bash -c '<test_command>'`",
+    "8. Final commit: `cd $(git rev-parse --show-toplevel) && git add -A && git commit -m 'final'`",
+    "9. ONLY NOW may you exit. If tests still fail and you have time remaining, keep working.",
     ...timeLines,
   ].join("\n");
 }
@@ -505,19 +519,20 @@ ${task}
 CONTEXT: You are in a git worktree branched from ${base}. All changes are isolated. Agent: ${agent}.
 
 DO THIS (follow this exact sequence):
-0. SURVEY: Run \`pwd\`. If CLAUDE.md exists, read it first. Then survey the repo: list all files (find . -maxdepth 3 -type f | head -80), read the task file, read ALL test/validation scripts. Batch file reads.
-1. PLAN: State your approach in 2-3 sentences BEFORE coding. What will you build? What does the test check? What pitfalls apply?
+0. SURVEY: Run \`pwd\`. Read CLAUDE.md FIRST — it contains the task description, test scripts, source files, environment info, and pre-flight test output. This saves you multiple turns of exploration. Then survey the repo: \`find . -maxdepth 3 -type f -not -path './.git/*' | head -80\`. If CLAUDE.md was missing or empty, read the task file and all test scripts manually.
+1. PLAN: State your approach in 2-3 sentences BEFORE coding. What will you build? What does the test check? What pitfalls apply? What exact output format is expected?
 2. CODE: Write the simplest correct solution. Verify files exist after writing: \`ls -la /path/to/file && head -5 /path/to/file\`.
 3. COMMIT: \`cd $(git rev-parse --show-toplevel) && git add -A && git commit -m 'solution'\` — BEFORE testing.
 4. TEST: Run every validation command. Read ALL output — every line. Compare actual vs expected byte-by-byte.
 5. FIX: Read the FULL error. Fix root cause. \`cd $(git rev-parse --show-toplevel) && git add -A && git commit -m 'fix: ...'\`.
 6. VERIFY: Re-run tests. If still failing after 3 edits to the same file, try a completely different approach.
-7. FINALIZE: Re-read task word by word. Verify all output files exist at exact paths. Final commit.
+7. FINALIZE: Run the MANDATORY Pre-Completion Checklist from the system prompt. Do NOT exit until you've completed every item.
 
 CRITICAL: The automated verifier checks EXACT outputs — filenames, paths, formats, whitespace, newlines, return codes.
 If stuck on the same error for 60+ seconds, try a completely different approach (different algorithm, language, or library).
 If you've edited a file 3+ times and it still fails, you are likely misunderstanding the problem — re-read the task from scratch and read the test/validation script source if available.
 Check your working directory (\`pwd\`) before writing files — ensure they end up at the paths the task specifies.
+Do NOT exit until you have run ALL tests and they ALL pass, or you have used your entire time budget.
 End with: cd $(git rev-parse --show-toplevel) && git add -A && git commit -m 'final'`;
 }
 
@@ -552,7 +567,36 @@ function bootstrapClaudeMd(worktreeDir: string): void {
   sections.push("- When task description is ambiguous, the test script wins.");
   sections.push("- Track your working directory with `pwd`. Write files to the exact paths tests expect.");
   sections.push("- Commit EARLY. An imperfect committed solution scores points; an uncommitted perfect solution scores ZERO.");
+  sections.push("- BEFORE finishing: run ALL test/validation scripts and read EVERY line of output. If ANY test fails, fix it.");
+  sections.push("- Do NOT exit until tests pass or you have exhausted your time budget.");
   sections.push("");
+
+  // Inject task file content so the agent doesn't waste a turn finding/reading it
+  const taskFileContent = readTaskFile(worktreeDir);
+  if (taskFileContent) {
+    hasContent = true;
+    sections.push("## Task Description (pre-loaded)");
+    sections.push("The following is the full task description from the task file:");
+    sections.push("```");
+    sections.push(taskFileContent.content.slice(0, 8000));
+    if (taskFileContent.content.length > 8000) {
+      sections.push(`\n... (${taskFileContent.content.length - 8000} more chars — read ${taskFileContent.filename} for full content)`);
+    }
+    sections.push("```");
+    sections.push("");
+  }
+
+  // Run environment discovery and inject results so the agent knows what tools are available
+  const envContext = discoverEnvironment(worktreeDir);
+  if (envContext) {
+    hasContent = true;
+    sections.push("## Environment Discovery (pre-scanned)");
+    sections.push("Available tools and versions in this environment:");
+    sections.push("```");
+    sections.push(envContext);
+    sections.push("```");
+    sections.push("");
+  }
 
   // Detect project type and add domain-specific hints
   const hints = detectProjectHints(worktreeDir);
@@ -853,6 +897,74 @@ function runPreflightTests(
   }
 
   return outputs.length > 0 ? outputs.join("\n\n") : null;
+}
+
+/**
+ * Read the task description file from the worktree.
+ * Checks for common task file names used in benchmarks and projects.
+ * Returns the content and filename, or null if no task file found.
+ */
+function readTaskFile(dir: string): { content: string; filename: string } | null {
+  const candidates = [
+    "TASK.md", "task.md", "TASK.txt", "task.txt",
+    "TASK", "task", "PROBLEM.md", "problem.md",
+    "CHALLENGE.md", "challenge.md",
+  ];
+  for (const name of candidates) {
+    const p = join(dir, name);
+    if (existsSync(p)) {
+      try {
+        const stat = statSync(p);
+        if (stat.isFile() && stat.size < 50_000) { // Skip if suspiciously large
+          return { content: readFileSync(p, "utf-8"), filename: name };
+        }
+      } catch { /* skip */ }
+    }
+  }
+  return null;
+}
+
+/**
+ * Discover the runtime environment: available tools, language versions,
+ * and system capabilities. This saves the agent 1-2 turns of exploration.
+ * Runs in a short timeout to avoid blocking on slow commands.
+ */
+function discoverEnvironment(dir: string): string | null {
+  const checks: string[] = [];
+  const run = (cmd: string, label: string): void => {
+    try {
+      const result = execSync(cmd, {
+        cwd: dir,
+        timeout: 5000,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, TERM: "dumb", NO_COLOR: "1" },
+      }).trim();
+      if (result) {
+        checks.push(`${label}: ${result.split("\n")[0]}`);
+      }
+    } catch {
+      // Tool not available — skip
+    }
+  };
+
+  run("python3 --version 2>&1", "Python");
+  run("python3 -c \"import sys; print(sys.executable)\" 2>&1", "Python path");
+  run("node --version 2>&1", "Node.js");
+  run("go version 2>&1 | head -1", "Go");
+  run("rustc --version 2>&1", "Rust");
+  run("cargo --version 2>&1", "Cargo");
+  run("gcc --version 2>&1 | head -1", "GCC");
+  run("g++ --version 2>&1 | head -1", "G++");
+  run("java -version 2>&1 | head -1", "Java");
+  run("ruby --version 2>&1", "Ruby");
+  run("which make cmake docker curl wget jq sqlite3 2>/dev/null | xargs -I{} basename {}", "Available tools");
+  run("uname -s 2>&1", "OS");
+  run("df -h / 2>&1 | tail -1 | awk '{print $4}'", "Free disk");
+  // Check for common package managers and their installed packages
+  run("pip3 list --format=columns 2>/dev/null | head -20 | tail -18", "Pip packages (sample)");
+
+  return checks.length > 0 ? checks.join("\n") : null;
 }
 
 function extractMakefileTestTargets(content: string): string | null {
@@ -2014,6 +2126,7 @@ class AgentRunner {
   private lastError: string | undefined;
   private idleTimeoutMs = DEFAULT_AGENT_IDLE_TIMEOUT_MS;
   private earlyExitRetries = 0;
+  private testFailureRetries = 0;
   private launchTime = 0;
   private lastOutputTail = "";
 
@@ -2239,17 +2352,147 @@ class AgentRunner {
         return;
       }
 
+      // Post-exit test verification: even when the agent exits normally,
+      // run tests to check if they actually pass. If tests fail and we still
+      // have budget remaining, retry with test failure context.
+      // This catches the common case where the agent THINKS it's done but
+      // the solution is actually broken.
+      if (
+        timeBudget &&
+        elapsed < timeBudget * LATE_EXIT_TEST_THRESHOLD &&
+        this.testFailureRetries < MAX_TEST_FAILURE_RETRIES
+      ) {
+        const testFailureOutput = this.runPostExitTestCheck();
+        if (testFailureOutput) {
+          this.testFailureRetries++;
+          const remainingBudget = Math.floor((timeBudget - elapsed) / 1000);
+          this.spinner?.warn(
+            `${TAG(this.id)} Tests FAILING after exit. Retrying with test results (${remainingBudget}s remaining)…`,
+          );
+          const retryContext = [
+            "",
+            "--- RETRY CONTEXT (tests are FAILING after your solution) ---",
+            "You exited thinking the task was complete, but the validation tests are STILL FAILING.",
+            "Test output:",
+            testFailureOutput.slice(0, 3000),
+            "",
+            "CRITICAL INSTRUCTIONS:",
+            "1. Read the test output above carefully — every line.",
+            "2. Identify exactly which tests fail and what they expect vs what you produce.",
+            "3. Compare your actual output to expected output byte-by-byte.",
+            "4. Fix the specific failures. Do NOT rewrite from scratch unless fundamentally wrong.",
+            "5. Re-run ALL tests after each fix.",
+            `6. You have ${remainingBudget} seconds remaining.`,
+            "7. COMMIT: `cd $(git rev-parse --show-toplevel) && git add -A && git commit -m 'fix: test failures'`",
+            "--- END RETRY CONTEXT ---",
+          ].join("\n");
+          this.currentTask = this.currentTask + retryContext;
+          this.lastOutputTail = "";
+          setTimeout(() => void this.launch(), 2000).unref?.();
+          return;
+        }
+      }
+
       this.status = "completed";
-      const msg =
-        this.restarts > 0 || this.earlyExitRetries > 0
-          ? `${TAG(this.id)} Complete after ${this.restarts} restart${this.restarts === 1 ? "" : "s"}${this.earlyExitRetries > 0 ? `, ${this.earlyExitRetries} early-exit retry` : ""}`
-          : `${TAG(this.id)} Complete`;
+      const retryInfo = [];
+      if (this.restarts > 0) retryInfo.push(`${this.restarts} restart${this.restarts === 1 ? "" : "s"}`);
+      if (this.earlyExitRetries > 0) retryInfo.push(`${this.earlyExitRetries} early-exit retry`);
+      if (this.testFailureRetries > 0) retryInfo.push(`${this.testFailureRetries} test-fix retry`);
+      const msg = retryInfo.length > 0
+        ? `${TAG(this.id)} Complete after ${retryInfo.join(", ")}`
+        : `${TAG(this.id)} Complete`;
       this.spinner?.succeed(msg);
       this.settle({ status: "success", exitCode, restarts: this.restarts });
       return;
     }
 
     this.handleFailure(`exit code ${exitCode}`, exitCode);
+  }
+
+  /**
+   * Run test/validation scripts in the worktree after the agent exits to check
+   * if the solution actually passes. Returns the test output if tests FAIL,
+   * or null if tests pass (or no test scripts found).
+   * This is a general pattern: verify the agent's work post-hoc.
+   */
+  private runPostExitTestCheck(): string | null {
+    const dir = this.worktree.dir;
+    const outputs: string[] = [];
+
+    // Try finding and running test/validation scripts
+    const testScriptCmd = [
+      "for f in $(find . -maxdepth 2 \\( -name 'test_*' -o -name '*_test.*' -o -name '*.test.*'",
+      "-o -name 'verify*' -o -name 'check*' -o -name 'validate*'",
+      "-o -name 'grade*' -o -name 'score*' \\) -type f 2>/dev/null | head -5); do",
+      "echo \"=== $f ===\"; chmod +x \"$f\" 2>/dev/null; bash \"$f\" 2>&1; echo \"EXIT:$?\"; done",
+    ].join(" ");
+
+    // Also try standard test commands
+    const standardTests = [
+      { check: "Makefile", cmd: "make test 2>&1" },
+      { check: "makefile", cmd: "make test 2>&1" },
+      { check: "package.json", cmd: "npm test 2>&1" },
+      { check: "Cargo.toml", cmd: "cargo test 2>&1" },
+      { check: "go.mod", cmd: "go test ./... 2>&1" },
+    ];
+
+    let ranAnyTest = false;
+    let anyFailure = false;
+
+    // Run validation scripts first
+    try {
+      const result = execSync(testScriptCmd, {
+        cwd: dir,
+        timeout: 30_000,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, TERM: "dumb", NO_COLOR: "1" },
+      });
+      const combined = (result || "").trim();
+      if (combined && combined.includes("EXIT:")) {
+        ranAnyTest = true;
+        outputs.push(combined);
+        // Check for any non-zero exit codes
+        const exitCodes = combined.match(/EXIT:(\d+)/g) || [];
+        for (const ec of exitCodes) {
+          if (ec !== "EXIT:0") anyFailure = true;
+        }
+      }
+    } catch (err: any) {
+      const combined = ((err.stdout || "") + "\n" + (err.stderr || "")).trim();
+      if (combined) {
+        ranAnyTest = true;
+        anyFailure = true;
+        outputs.push(combined);
+      }
+    }
+
+    // Run standard test commands
+    for (const { check, cmd } of standardTests) {
+      if (!existsSync(join(dir, check))) continue;
+      try {
+        const result = execSync(cmd, {
+          cwd: dir,
+          timeout: 30_000,
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          env: { ...process.env, TERM: "dumb", NO_COLOR: "1" },
+        });
+        ranAnyTest = true;
+        outputs.push(`$ ${cmd}\n${(result || "").trim()}`);
+        break; // Only run one standard command
+      } catch (err: any) {
+        ranAnyTest = true;
+        anyFailure = true;
+        const combined = ((err.stdout || "") + "\n" + (err.stderr || "")).trim();
+        outputs.push(`$ ${cmd} (FAILED)\n${combined}`);
+        break;
+      }
+    }
+
+    // If no tests were found or all passed, return null (no retry needed)
+    if (!ranAnyTest || !anyFailure) return null;
+    return outputs.join("\n\n").slice(0, 5000);
   }
 
   private handleFailure(reason: string, exitCode: number) {
@@ -4297,6 +4540,8 @@ export {
   findSourceFiles,
   runPreflightTests,
   extractMakefileTestTargets,
+  readTaskFile,
+  discoverEnvironment,
 };
 export { isAgentId };
 export type { AgentId, Opts, ReviewerDecision, AgentRunResult, RunReport, AgentReport, AgentStats, ParsedArgs };
