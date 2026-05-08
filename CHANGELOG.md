@@ -16,6 +16,12 @@
 
 **Tests**: 555 passing (+4 new assertions covering the new defaults and relaxed pair parsing).
 
+**Benchmark-mode hardening for terminal-bench 2.0**
+
+- When `GITGANG_TIME_BUDGET_SECONDS` is set, gitgang now augments any existing `CLAUDE.md` with task-file contents, environment discovery, project hints, test and validation scripts, key source files, and pre-flight test output for Claude benchmark runs.
+- Added a benchmark-only early-exit retry path: if Claude exits suspiciously fast, gitgang retries once with the previous output, diff, and test results attached as retry context instead of starting from scratch.
+- Added post-exit validation for benchmark runs: if the agent exits “successfully” while time is still available but the tests still fail, gitgang retries once with the failing test output attached.
+
 ## v1.8.1 — 2026-04-15
 
 Non-git Q&A mode — gitgang now works like Claude Code: you can run `gg -i` from any directory, not just git repos.
