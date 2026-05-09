@@ -397,7 +397,7 @@ function systemConstraints(agent: AgentId) {
     "# Workflow: Survey → Plan → Code → Commit → Test → Fix → Commit",
     "",
     "## Step 0: Survey the environment (ONE command)",
-    "If CLAUDE.md exists with environment context, read it first — it contains pre-analyzed test scripts and project hints. Skip redundant discovery.",
+    "If CLAUDE.md exists with environment context, read it THOROUGHLY — it contains pre-analyzed test scripts, directory tree, source files, environment info, and pre-flight test output. This saves you many turns of exploration. Do NOT re-run discovery commands that CLAUDE.md already covers.",
     "Otherwise, survey the repo in a SINGLE batch command:",
     "```bash",
     "pwd && find . -maxdepth 3 -type f -not -path './.git/*' -not -path './node_modules/*' | head -80 && echo '===' && cat TASK.md task.md task.txt README.md 2>/dev/null && echo '===' && cat Makefile makefile package.json requirements.txt setup.py pyproject.toml Cargo.toml go.mod CMakeLists.txt 2>/dev/null | head -100",
@@ -416,6 +416,18 @@ function systemConstraints(agent: AgentId) {
     "- What directory should output files be in? Absolute (like /app/) or relative?",
     "- CRITICAL: The test/validation script is the GROUND TRUTH. If the task description conflicts with what the test checks, the test wins.",
     "This planning step is brief but prevents wasting time on wrong approaches.",
+    "",
+    "## Step 1.5: Run setup/init scripts if present",
+    "Before coding, check for and run any setup scripts that prepare the environment:",
+    "```bash",
+    "# Run setup scripts if they exist (order matters)",
+    "for f in setup.sh init.sh install.sh bootstrap.sh configure.sh prepare.sh; do",
+    "  [ -f \"$f\" ] && chmod +x \"$f\" && bash \"$f\" 2>&1 | tail -20 && echo \"Setup $f done\";",
+    "done",
+    "# Also install deps from manifest files if not already installed",
+    "[ -f requirements.txt ] && pip install -r requirements.txt --break-system-packages 2>/dev/null",
+    "[ -f package.json ] && npm install 2>/dev/null",
+    "```",
     "",
     "## Step 2: Write code",
     "Write complete files — not incremental patches. Start with the simplest correct implementation.",
@@ -487,6 +499,10 @@ function systemConstraints(agent: AgentId) {
     "Compilation errors → read the FULL error, don't just fix the first line. Compiler errors cascade.",
     "Linker errors → check library paths, missing `-l` flags, wrong library versions.",
     "Segfault / core dump → use `valgrind` or add print statements to narrow down the crash location.",
+    "Docker issues → `docker info` to verify daemon, `docker build --no-cache` for stale builds.",
+    "Network/port issues → `ss -tlnp` to check listeners, `curl -v` for detailed HTTP debugging.",
+    "File not found after writing → check `pwd`, use absolute paths, verify with `ls -la`.",
+    "Binary/hex mismatch → use `xxd file | head -20` to inspect, `python3 -c \"print(open('f','rb').read()[:100])\"` for raw bytes.",
     "",
     "# MANDATORY Pre-Completion Checklist (do NOT skip any step)",
     "Before you declare yourself done, you MUST complete EVERY item on this checklist.",
@@ -537,6 +553,69 @@ End with: cd $(git rev-parse --show-toplevel) && git add -A && git commit -m 'fi
 }
 
 /**
+ * Generate a compact directory tree listing for the worktree.
+ * This saves the agent 1-2 turns of `find` or `ls` exploration.
+ */
+function generateDirectoryTree(dir: string): string | null {
+  const lines: string[] = [];
+  const maxLines = 120;
+  const skipDirs = new Set([
+    ".git", "node_modules", "__pycache__", ".venv", "venv",
+    ".mypy_cache", ".pytest_cache", ".tox", ".eggs",
+    "target", "build", "dist", ".next", ".nuxt",
+    ".cache", ".DS_Store", "vendor",
+  ]);
+
+  function walk(current: string, prefix: string, depth: number) {
+    if (depth > 4 || lines.length >= maxLines) return;
+    try {
+      const entries = readdirSync(current, { withFileTypes: true })
+        .filter((e) => !skipDirs.has(e.name) && !e.name.startsWith(".git"))
+        .sort((a, b) => {
+          // Directories first, then files
+          if (a.isDirectory() && !b.isDirectory()) return -1;
+          if (!a.isDirectory() && b.isDirectory()) return 1;
+          return a.name.localeCompare(b.name);
+        });
+
+      for (let i = 0; i < entries.length && lines.length < maxLines; i++) {
+        const entry = entries[i];
+        const isLast = i === entries.length - 1;
+        const connector = isLast ? "└── " : "├── ";
+        const fullPath = join(current, entry.name);
+
+        if (entry.isDirectory()) {
+          lines.push(`${prefix}${connector}${entry.name}/`);
+          const nextPrefix = prefix + (isLast ? "    " : "│   ");
+          walk(fullPath, nextPrefix, depth + 1);
+        } else {
+          // Show file size for context
+          try {
+            const stat = statSync(fullPath);
+            const sizeStr = stat.size < 1024
+              ? `${stat.size}B`
+              : stat.size < 1024 * 1024
+                ? `${(stat.size / 1024).toFixed(0)}K`
+                : `${(stat.size / (1024 * 1024)).toFixed(1)}M`;
+            lines.push(`${prefix}${connector}${entry.name} (${sizeStr})`);
+          } catch {
+            lines.push(`${prefix}${connector}${entry.name}`);
+          }
+        }
+      }
+    } catch {
+      // Permission errors, etc.
+    }
+  }
+
+  walk(dir, "", 0);
+  if (lines.length >= maxLines) {
+    lines.push(`... (truncated at ${maxLines} entries)`);
+  }
+  return lines.length > 0 ? lines.join("\n") : null;
+}
+
+/**
  * Bootstrap a CLAUDE.md file in the worktree for benchmark mode.
  * Scans the repo for test/validation scripts and includes their contents,
  * detects the project type for domain-specific hints, and provides
@@ -578,10 +657,21 @@ function bootstrapClaudeMd(worktreeDir: string): void {
     sections.push("## Task Description (pre-loaded)");
     sections.push("The following is the full task description from the task file:");
     sections.push("```");
-    sections.push(taskFileContent.content.slice(0, 8000));
-    if (taskFileContent.content.length > 8000) {
-      sections.push(`\n... (${taskFileContent.content.length - 8000} more chars — read ${taskFileContent.filename} for full content)`);
+    sections.push(taskFileContent.content.slice(0, 16000));
+    if (taskFileContent.content.length > 16000) {
+      sections.push(`\n... (${taskFileContent.content.length - 16000} more chars — read ${taskFileContent.filename} for full content)`);
     }
+    sections.push("```");
+    sections.push("");
+  }
+
+  // Include directory tree so the agent sees the full structure upfront
+  const dirTree = generateDirectoryTree(worktreeDir);
+  if (dirTree) {
+    hasContent = true;
+    sections.push("## Directory Structure (pre-scanned)");
+    sections.push("```");
+    sections.push(dirTree);
     sections.push("```");
     sections.push("");
   }
@@ -613,6 +703,8 @@ function bootstrapClaudeMd(worktreeDir: string): void {
   const testPatterns = [
     "test_", "_test.", ".test.", "verify", "check", "validate",
     "grade", "score", "run_test", "run_check",
+    "run.sh", "setup.sh", "init.sh", "solve", "judge", "eval",
+    "benchmark", "assert", "expect",
   ];
   const testFiles = findTestScripts(worktreeDir, testPatterns);
 
@@ -624,8 +716,8 @@ function bootstrapClaudeMd(worktreeDir: string): void {
       try {
         const content = readFileSync(tf.path, "utf-8");
         const lines = content.split("\n");
-        const preview = lines.slice(0, 150).join("\n");
-        const truncated = lines.length > 150 ? `\n... (${lines.length - 150} more lines)` : "";
+        const preview = lines.slice(0, 250).join("\n");
+        const truncated = lines.length > 250 ? `\n... (${lines.length - 250} more lines)` : "";
         sections.push(`### ${tf.relative}`);
         sections.push("```");
         sections.push(preview + truncated);
@@ -680,8 +772,8 @@ function bootstrapClaudeMd(worktreeDir: string): void {
       try {
         const content = readFileSync(sf.path, "utf-8");
         const lines = content.split("\n");
-        const preview = lines.slice(0, 100).join("\n");
-        const truncated = lines.length > 100 ? `\n... (${lines.length - 100} more lines)` : "";
+        const preview = lines.slice(0, 200).join("\n");
+        const truncated = lines.length > 200 ? `\n... (${lines.length - 200} more lines)` : "";
         sections.push(`### ${sf.relative}`);
         sections.push("```");
         sections.push(preview + truncated);
@@ -760,8 +852,8 @@ function findSourceFiles(
   dir: string,
 ): { path: string; relative: string }[] {
   const results: { path: string; relative: string }[] = [];
-  const maxFiles = 8; // Cap to avoid bloating CLAUDE.md
-  const maxFileSize = 15_000; // Skip files larger than 15KB (likely not the main target)
+  const maxFiles = 12; // Cap to avoid bloating CLAUDE.md
+  const maxFileSize = 25_000; // Skip files larger than 25KB (likely not the main target)
   const skipPatterns = [
     "test_", "_test.", ".test.", "verify", "check", "validate",
     "grade", "score", "run_test", "run_check",
@@ -909,6 +1001,9 @@ function readTaskFile(dir: string): { content: string; filename: string } | null
     "TASK.md", "task.md", "TASK.txt", "task.txt",
     "TASK", "task", "PROBLEM.md", "problem.md",
     "CHALLENGE.md", "challenge.md",
+    "README.md", "readme.md", "README.txt", "readme.txt",
+    "INSTRUCTIONS.md", "instructions.md",
+    "PROMPT.md", "prompt.md", "PROMPT.txt", "prompt.txt",
   ];
   for (const name of candidates) {
     const p = join(dir, name);
@@ -959,10 +1054,20 @@ function discoverEnvironment(dir: string): string | null {
   run("java -version 2>&1 | head -1", "Java");
   run("ruby --version 2>&1", "Ruby");
   run("which make cmake docker curl wget jq sqlite3 2>/dev/null | xargs -I{} basename {}", "Available tools");
+  run("which nasm gdb valgrind strace ltrace objdump nm readelf strings hexdump xxd 2>/dev/null | xargs -I{} basename {}", "Debug/binary tools");
+  run("which perl php lua R julia 2>/dev/null | xargs -I{} basename {}", "Other languages");
+  run("which tar gzip bzip2 xz zip unzip 2>/dev/null | xargs -I{} basename {}", "Archive tools");
+  run("which sed awk grep find xargs sort uniq wc head tail tee tr cut paste 2>/dev/null | xargs -I{} basename {}", "Text processing");
+  run("which nc ncat socat ss netstat ip ifconfig ping dig nslookup 2>/dev/null | xargs -I{} basename {}", "Network tools");
   run("uname -s 2>&1", "OS");
+  run("uname -m 2>&1", "Architecture");
   run("df -h / 2>&1 | tail -1 | awk '{print $4}'", "Free disk");
+  run("free -h 2>/dev/null | head -2 || sysctl -n hw.memsize 2>/dev/null", "Memory");
+  run("nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null", "CPU cores");
   // Check for common package managers and their installed packages
   run("pip3 list --format=columns 2>/dev/null | head -20 | tail -18", "Pip packages (sample)");
+  // Check what apt packages are available
+  run("dpkg -l 2>/dev/null | tail -20 | awk '{print $2}' | head -15", "Installed apt packages (sample)");
 
   return checks.length > 0 ? checks.join("\n") : null;
 }
@@ -1040,6 +1145,31 @@ function detectProjectHints(dir: string): string[] {
   if (existsSync(join(dir, "Dockerfile")) || existsSync(join(dir, "docker-compose.yml")) ||
       existsSync(join(dir, "docker-compose.yaml"))) {
     hints.push("Docker files present. If the task involves containers, use `docker build` / `docker compose up`.");
+    hints.push("Docker gotcha: if `docker` commands fail, try `dockerd &` first, or check if in a nested container.");
+  }
+
+  // Shell scripts (common in terminal-bench)
+  try {
+    const shFiles = readdirSync(dir).filter((f) => f.endsWith(".sh"));
+    if (shFiles.length > 0) {
+      hints.push(`Shell scripts found: ${shFiles.join(", ")}. Make them executable with \`chmod +x *.sh\` before running.`);
+      hints.push("Shell scripting pitfalls: CRLF line endings (use `dos2unix` or `sed -i 's/\\r$//'`), unquoted variables, missing shebangs.");
+    }
+  } catch { /* skip */ }
+
+  // Assembly / low-level
+  try {
+    const asmFiles = readdirSync(dir).filter((f) => /\.(asm|s|S)$/.test(f));
+    if (asmFiles.length > 0) {
+      hints.push("Assembly files present. Use `nasm` for x86 NASM syntax, `as` for GAS syntax.");
+      hints.push("Link with: `ld -o output object.o` or `gcc -nostdlib -o output object.o`.");
+    }
+  } catch { /* skip */ }
+
+  // SQL / Database
+  if (existsSync(join(dir, "schema.sql")) || existsSync(join(dir, "init.sql")) ||
+      existsSync(join(dir, "database.sql"))) {
+    hints.push("SQL files found. Use `sqlite3 db.sqlite < schema.sql` for SQLite or `psql` for PostgreSQL.");
   }
 
   return hints;
