@@ -59,6 +59,29 @@ node benchmarks/harness/run.mjs [--filter=<glob>] [--only-hard]
 node benchmarks/harness/score.mjs benchmarks/results/run-<timestamp>.json
 ```
 
+## Benchmark-mode bootstrap
+
+When gitgang is run under the Harbor / terminal-bench flow with a time budget,
+the Claude worker now starts with an auto-generated `CLAUDE.md` in the task
+worktree. The goal is to spend fewer turns on repo discovery and more turns
+solving the task.
+
+That bootstrap preloads:
+
+- the first matching task file (`TASK.md`, `task.txt`, `README.md`,
+  `INSTRUCTIONS.md`, `PROMPT.md`, etc.)
+- a compact directory tree with file sizes
+- discovered tool and runtime information
+- discovered test and validation scripts plus Makefile test targets
+- previews of up to 12 likely source files
+- baseline pre-flight test output when gitgang can safely run something up front
+
+If the task already ships its own `CLAUDE.md`, gitgang preserves it and appends
+the extra benchmark context. The benchmark-mode prompt also now tells the agent
+to run setup/init scripts when present and includes broader recovery guidance
+for Docker, networking, binary-format, and file-placement failures. Normal
+day-to-day use of `gg` is otherwise unchanged.
+
 ## Honesty about stump rate
 
 The `expectedToStump` flag on each task is a prior, not empirical data. The

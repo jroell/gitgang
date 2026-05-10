@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**Benchmark-mode Claude runs now start with much richer preloaded context.**
+
+- In time-budgeted Claude runs (the path used by the Harbor / terminal-bench flow), gitgang now bootstraps `CLAUDE.md` with the detected task file, a compact directory tree, discovered tool/runtime info, test and validation script contents, key source-file previews, and baseline pre-flight test output.
+- Task-file detection now recognizes `README.md`, `INSTRUCTIONS.md`, and `PROMPT.md` variants, and test discovery now catches more setup/run/judge/eval/benchmark-style scripts.
+- Benchmark prompts now explicitly tell the agent to run setup/init scripts when present and include broader recovery guidance for Docker, networking, binary/hex mismatches, and specialized project types.
+- Normal interactive, pair, and one-shot CLI usage is otherwise unchanged; this is a benchmark-mode execution improvement.
+- Tests: 598 passing.
+
 **Pair mode is now the default when you run `gg` with no arguments.**
 
 - `gg` (bare) prompts for a task and then enters pair mode with `claude` as coder and `codex` as reviewer.
