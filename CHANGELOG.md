@@ -11,6 +11,7 @@
 - `gg -i` still starts the interactive REPL; `gg "task"` still runs the one-shot multi-agent flow. Scripts that passed a task positionally or used `-i` keep working unchanged.
 - Help text updated: the new Usage block shows pair-as-default, with an explicit "Pair Mode" section listing override flags (`--coder`, `--reviewer`, `--no-yolo`, `--timeout`).
 - `gg --solo <agent> "task"` now skips the reviewer loop entirely, auto-merges the successful agent branch into the generated merge branch, and exits 0 when that merge is clean.
+- The default Claude model is now `claude-opus-4-7` across GitGang flows. Use `GITGANG_CLAUDE_MODEL` or `--model-claude` to override it per environment or per run.
 
 **Note for returning users**: if you typed bare `gg` expecting the interactive REPL (the v1.7.0–v1.9.x default), use `gg -i` from now on.
 

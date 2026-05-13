@@ -223,8 +223,8 @@ gg init  # creates the config file
   "timeoutMs": 1500000,
   "heartbeatIntervalMs": 30000,
   "models": {
-    "gemini": "gemini-2.5-pro",
-    "claude": "claude-opus-4-6",
+    "gemini": "gemini-3.1-pro-preview",
+    "claude": "claude-opus-4-7",
     "codex": "gpt-5.4"
   }
 }
