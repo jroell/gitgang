@@ -59,6 +59,14 @@ node benchmarks/harness/run.mjs [--filter=<glob>] [--only-hard]
 node benchmarks/harness/score.mjs benchmarks/results/run-<timestamp>.json
 ```
 
+## Harbor / terminal-bench 2.0
+
+`benchmarks/harbor/gitgang_harbor_agent.py` runs GitGang in `--solo claude` mode inside a terminal-bench 2.0 environment.
+
+- Install-time bootstrap now preloads Node 22, Rust, Go, and a common set of Python packages before building GitGang.
+- Before each run, the agent writes a task-first `CLAUDE.md` snapshot with the task text, likely test files, directory listing, and tool availability so Claude starts with the key environment context already on disk.
+- The harness then runs `gitgang --solo claude --yolo --no-pr -- "<instruction>"` and leaves pass/fail to the benchmark verifier rather than GitGang's process exit code.
+
 ## Honesty about stump rate
 
 The `expectedToStump` flag on each task is a prior, not empirical data. The
