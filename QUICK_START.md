@@ -21,11 +21,13 @@ Bare `gg` enters AI pair programming — one agent codes while another reviews i
 
 ```bash
 gg                          # prompts for a task, then pair mode (claude + codex)
-gg "add JWT auth middleware" # pair mode with that task
+gg pair "add JWT auth middleware" # pair mode with that task
 gg pair --coder codex --reviewer claude "refactor auth"  # swap roles
 ```
 
 The coder works normally while the reviewer monitors in parallel. If the reviewer spots a problem, it pauses the coder and the two agents have an autonomous conversation until they agree. When the coder finishes, the reviewer does a final pass and you get a session summary.
+
+Use `gg pair` when you want to pass the task inline. `gg "task"` is the one-shot multi-agent path.
 
 ### Pair Mode Options
 
@@ -107,7 +109,18 @@ gg init   # scaffold .gitgang/config.json
 
 Priority: CLI flags > env vars > config.json > built-in defaults.
 
-Model overrides: `GITGANG_GEMINI_MODEL`, `GITGANG_CLAUDE_MODEL`, `GITGANG_CODEX_MODEL`.
+### Model Overrides
+
+Default one-shot and interactive models are `gemini-3.1-pro`, `claude-opus-4-7`, and `gpt-5.5`.
+
+```bash
+gg --model-claude claude-sonnet-4-6 --model-codex gpt-5.4-mini "audit the auth flow"
+gg -i --model-gemini gemini-2.5-flash "how does session resume work?"
+```
+
+These flags take precedence over `GITGANG_GEMINI_MODEL`, `GITGANG_CLAUDE_MODEL`, and `GITGANG_CODEX_MODEL`.
+
+Pair mode uses the environment variables only. Its built-in defaults are `claude-opus-4-7` and `gpt-5.4`.
 
 ## Troubleshooting
 
