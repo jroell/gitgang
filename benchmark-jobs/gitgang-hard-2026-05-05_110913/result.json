@@ -1,0 +1,28 @@
+{
+    "id": "779a5180-c15a-4c5c-be36-e9feea0c71ab",
+    "started_at": "2026-05-05T11:09:15.620648",
+    "finished_at": "2026-05-05T11:21:24.569778",
+    "n_total_trials": 1,
+    "stats": {
+        "n_trials": 1,
+        "n_errors": 1,
+        "evals": {
+            "gitgang__claude-opus-4-7__terminal-bench": {
+                "n_trials": 0,
+                "n_errors": 1,
+                "metrics": [
+                    {
+                        "mean": 0.0
+                    }
+                ],
+                "pass_at_k": {},
+                "reward_stats": {},
+                "exception_stats": {
+                    "AgentSetupTimeoutError": [
+                        "fix-code-vulnerability__JT98M7f"
+                    ]
+                }
+            }
+        }
+    }
+}

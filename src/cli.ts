@@ -1,7 +1,7 @@
 // GitGang - The gang's all here to code!
 // Hardened orchestration CLI for autonomous multi-agent development.
 
-import { spawn, type SpawnOptions, type ChildProcess } from "node:child_process";
+import { spawn, execSync, type SpawnOptions, type ChildProcess } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -70,6 +70,10 @@ const INITIAL_AGENT_BACKOFF_MS = 2_500;
 const ROUND_COMPLETION_TIMEOUT_MS = 15 * 60 * 1000; // Force reviewer after 15 min even if agents still running
 const POST_TIMEOUT_GRACE_MS = 3 * 1000; // Allow short grace after round timeout for just-landing results
 const MAX_AGENT_BACKOFF_MS = 2 * 60 * 1000;
+const EARLY_EXIT_THRESHOLD = 0.40; // If agent exits before 40% of time budget, consider retrying
+const LATE_EXIT_TEST_THRESHOLD = 0.85; // If agent exits before 85% of budget, run post-exit test check
+const MAX_EARLY_EXIT_RETRIES = 1; // Only 1 early-exit retry to avoid wasting the budget
+const MAX_TEST_FAILURE_RETRIES = 1; // Retry once if tests fail on normal exit
 const REVIEWER_MAX_RETRIES = 3;
 const REVIEWER_TIMEOUT_MS = Number(process.env.GITGANG_REVIEWER_TIMEOUT_MS ?? 15 * 60 * 1000); // 15 minutes default, override via env
 const DEFAULT_POST_MERGE_CHECKS: string[] = [];
@@ -384,37 +388,48 @@ function systemConstraints(agent: AgentId) {
     "7. Track your working directory. Run `pwd` before and after major operations. If the task specifies an absolute path like `/app/`, work there. Never accidentally write files to the wrong directory.",
     "8. When tests fail, compare your ACTUAL output against EXPECTED output byte-for-byte. Use `diff`, `xxd`, or `python3 -c \"print(repr(open('file').read()))\"` to see hidden characters.",
     "9. If a task requires a server/daemon, test it end-to-end: start it, verify it responds (`curl`/`nc`), THEN commit. Don't commit untested server code.",
+    "10. Read multiple files in a single tool call when possible. Batch file reads to save turns and time.",
+    "11. NEVER give up. If your approach fails, try a completely different one. Use every second of your time budget.",
+    "12. When you see a test assertion, reverse-engineer exactly what it expects. Work backwards from the assertion to your implementation.",
+    "13. Prefer EXISTING code over rewriting. If the repo already has a partial implementation, extend it rather than starting from scratch.",
+    "14. If a task mentions specific file paths, create parent directories first: `mkdir -p /path/to/dir`.",
     "",
-    "# Workflow: Read → Analyze → Code → Commit → Test → Fix → Commit",
+    "# Workflow: Survey → Plan → Code → Commit → Test → Fix → Commit",
     "",
-    "## Step 1: Read and understand the task",
-    "Read TASK.md / task.md / task.txt / README.md thoroughly. Then read ALL source files the task references or that already exist in the repo. Identify:",
-    "- Exact output format, file paths, and expected behavior",
-    "- Edge cases, constraints, and special requirements",
-    "- Available test/validation scripts (check tests/ test/ verify* check* validate* Makefile). READ THEIR FULL SOURCE CODE — the assertions reveal what 'correct' means.",
-    "- Expected output: what does 'correct' look like? If examples are given, note the exact format (whitespace, newlines, precision).",
-    "- What directory should your output files be in? Check if paths are absolute (like /app/) or relative.",
-    "- CRITICAL: The test/validation script is the GROUND TRUTH. If the task description is ambiguous, the test script's assertions are the definitive specification. Read it thoroughly.",
-    "",
-    "If CLAUDE.md exists with environment context, use it — skip redundant discovery commands.",
-    "Otherwise run ONE command to survey:",
+    "## Step 0: Survey the environment (ONE command)",
+    "If CLAUDE.md exists with environment context, read it THOROUGHLY — it contains pre-analyzed test scripts, directory tree, source files, environment info, and pre-flight test output. This saves you many turns of exploration. Do NOT re-run discovery commands that CLAUDE.md already covers.",
+    "Otherwise, survey the repo in a SINGLE batch command:",
     "```bash",
-    'find . -maxdepth 2 -type f | head -60 && echo "===" && cat Makefile makefile package.json requirements.txt setup.py pyproject.toml Cargo.toml go.mod CMakeLists.txt 2>/dev/null | head -80',
+    "pwd && find . -maxdepth 3 -type f -not -path './.git/*' -not -path './node_modules/*' | head -80 && echo '===' && cat TASK.md task.md task.txt README.md 2>/dev/null && echo '===' && cat Makefile makefile package.json requirements.txt setup.py pyproject.toml Cargo.toml go.mod CMakeLists.txt 2>/dev/null | head -100",
+    "```",
+    "Then immediately read ALL test/validation scripts (test_*, *_test.*, verify*, check*, validate*, grade*, score*).",
+    "Read source files referenced by the task. Batch multiple file reads into one command where possible.",
+    "",
+    "## Step 1: Plan (write a brief plan before coding)",
+    "Before writing ANY code, think through and state your plan:",
+    "- What EXACTLY does the task require? List each output/artifact.",
+    "- What do the test scripts check? Trace through their assertions.",
+    "- What is the simplest correct approach? Consider 2 approaches and pick the most reliable one.",
+    "- What are the likely pitfalls for this type of task? (off-by-one, encoding, precision, endianness, path issues)",
+    "- What output format does the verifier expect? Exact bytes matter: trailing newlines, encoding, numeric precision.",
+    "- Are there HIDDEN requirements in the test assertions? (return codes, stderr vs stdout, file permissions, exact paths)",
+    "- What directory should output files be in? Absolute (like /app/) or relative?",
+    "- CRITICAL: The test/validation script is the GROUND TRUTH. If the task description conflicts with what the test checks, the test wins.",
+    "This planning step is brief but prevents wasting time on wrong approaches.",
+    "",
+    "## Step 1.5: Run setup/init scripts if present",
+    "Before coding, check for and run any setup scripts that prepare the environment:",
+    "```bash",
+    "# Run setup scripts if they exist (order matters)",
+    "for f in setup.sh init.sh install.sh bootstrap.sh configure.sh prepare.sh; do",
+    "  [ -f \"$f\" ] && chmod +x \"$f\" && bash \"$f\" 2>&1 | tail -20 && echo \"Setup $f done\";",
+    "done",
+    "# Also install deps from manifest files if not already installed",
+    "[ -f requirements.txt ] && pip install -r requirements.txt --break-system-packages 2>/dev/null",
+    "[ -f package.json ] && npm install 2>/dev/null",
     "```",
     "",
-    "## Step 2: Analyze before coding (spend <30 seconds)",
-    "Extract relevant domain knowledge from your training. Think through:",
-    "- What domain knowledge applies? (e.g., crypto standards, ML conventions, protocol specs, algorithm properties)",
-    "- What are the likely pitfalls for this type of task? (e.g., off-by-one, encoding, precision, endianness)",
-    "- What is the simplest correct approach? Consider 2 approaches and pick the most reliable one.",
-    "- What does the test/validation script actually check? Match THAT, not just your interpretation of the task.",
-    "- If existing code/tests are in the repo, read them first — they reveal expected interfaces and behavior.",
-    "- What output format does the verifier expect? Exact bytes matter: trailing newlines, encoding, numeric precision.",
-    "- Are there HIDDEN requirements in the test assertions? (e.g., specific return codes, stderr vs stdout, file permissions)",
-    "- If the task involves I/O: what is the EXACT expected output? Trace through the test script's assertions line by line.",
-    "This step is short (<30 seconds) but prevents wasting time on wrong approaches.",
-    "",
-    "## Step 3: Write code",
+    "## Step 2: Write code",
     "Write complete files — not incremental patches. Start with the simplest correct implementation.",
     "",
     "File writing: use `cat <<'EOF' > file` (single-quoted delimiter). Verify after writing: `head -3 file && wc -l file`.",
@@ -430,14 +445,18 @@ function systemConstraints(agent: AgentId) {
     "After writing files, verify they exist: `ls -la /path/to/file && head -5 /path/to/file`",
     "Servers/daemons: `nohup command > /dev/null 2>&1 &` then verify with `curl` or `nc -z localhost PORT`.",
     "",
-    "## Step 4: Commit IMMEDIATELY",
+    "Long-running commands: wrap with `timeout`: `timeout 60 <command>`. If a command might hang,",
+    "run it in background and poll: `command &; PID=$!; sleep 5; kill $PID 2>/dev/null`.",
+    "Interactive sessions (REPLs, editors): use heredoc or script input, never rely on interactive prompts.",
+    "",
+    "## Step 3: Commit IMMEDIATELY",
     "```bash",
     "cd $(git rev-parse --show-toplevel) && git add -A && git commit -m 'solution'",
     "```",
     "Do this BEFORE testing. A committed imperfect solution > uncommitted perfect solution.",
     "If 'nothing to commit': check `pwd` and `git status` — you may be in the wrong directory or the git repo root differs from your working directory.",
     "",
-    "## Step 5: Test and verify (invest the most time here)",
+    "## Step 4: Test and verify (invest the most time here)",
     "This is the most important step. A solution that passes verification is worth infinitely more than a clever one that doesn't.",
     "- Run the EXACT validation command from the task description first.",
     "- Check for test scripts: `ls tests/ test/ verify* check* validate* run* grade* score* Makefile 2>/dev/null`",
@@ -448,8 +467,9 @@ function systemConstraints(agent: AgentId) {
     "- If the task mentions specific test data or examples, verify against ALL of them — not just the first.",
     "- If you can run the grading/test script yourself, do it now and read EVERY line of output.",
     "- If test output is long, DON'T skip reading it. Every line could reveal a failure pattern.",
+    "- For server tasks: test with actual requests (`curl`, `wget`, `nc`), don't just check if the process started.",
     "",
-    "## Step 6: Fix and recommit",
+    "## Step 5: Fix and recommit",
     "Read the FULL error output — every line. Fix the root cause, not symptoms.",
     "`cd $(git rev-parse --show-toplevel) && git add -A && git commit -m 'fix: ...'` after each fix. Re-run tests after every fix.",
     "After each fix, re-read the task description to make sure you haven't drifted from requirements.",
@@ -461,6 +481,7 @@ function systemConstraints(agent: AgentId) {
     "- Are you fixing symptoms instead of root cause? Step back and think about what the test actually checks.",
     "- Read the test/validation script source code if available to understand what it expects.",
     "- Check your working directory: `pwd` — are files ending up in the right place?",
+    "- Compare ACTUAL vs EXPECTED output byte-for-byte using `diff`, `xxd`, or `python3 repr()`.",
     "Do NOT keep making small tweaks to the same code hoping it will work.",
     "",
     "# Error Recovery",
@@ -475,15 +496,34 @@ function systemConstraints(agent: AgentId) {
     "Test expects specific output format → use `diff <(your_cmd) <(printf 'expected')` to compare byte-by-byte.",
     "Encoding issues → check: `file output.txt`, `xxd output.txt | head`, ensure UTF-8 without BOM.",
     "Numeric precision → match EXACTLY what the test expects (e.g. '3.14' not '3.140000').",
+    "Compilation errors → read the FULL error, don't just fix the first line. Compiler errors cascade.",
+    "Linker errors → check library paths, missing `-l` flags, wrong library versions.",
+    "Segfault / core dump → use `valgrind` or add print statements to narrow down the crash location.",
+    "Docker issues → `docker info` to verify daemon, `docker build --no-cache` for stale builds.",
+    "Network/port issues → `ss -tlnp` to check listeners, `curl -v` for detailed HTTP debugging.",
+    "File not found after writing → check `pwd`, use absolute paths, verify with `ls -la`.",
+    "Binary/hex mismatch → use `xxd file | head -20` to inspect, `python3 -c \"print(open('f','rb').read()[:100])\"` for raw bytes.",
     "",
-    "# Before finishing",
-    "1. Re-read the task description word by word — check every single requirement.",
-    "2. Verify output files exist at the exact paths specified: `ls -la /exact/path/to/file`",
-    "3. Verify output FORMAT matches expectations: check trailing newlines (`wc -c file`), encoding, numeric precision.",
-    "4. Run validation one final time and read the ENTIRE output carefully — every line.",
-    "5. If the test output shows ANY failure, fix it before committing. Do not proceed with failures.",
-    "6. If tests pass, verify one more time from scratch: `cd $(git rev-parse --show-toplevel) && bash -c '<test_command>'`",
-    "7. `cd $(git rev-parse --show-toplevel) && git add -A && git commit -m 'final'`",
+    "# MANDATORY Pre-Completion Checklist (do NOT skip any step)",
+    "Before you declare yourself done, you MUST complete EVERY item on this checklist.",
+    "If you skip any item, you will fail the task. This is not optional.",
+    "",
+    "1. STOP and re-read the ENTIRE task description word by word. List each requirement mentally.",
+    "2. For EACH requirement, verify you addressed it. If you missed one, go back and fix it now.",
+    "3. Verify ALL output files exist at the EXACT paths specified: `ls -la /exact/path/to/file`",
+    "4. Verify output FORMAT: check trailing newlines (`wc -c file`), encoding (`file output.txt`), numeric precision.",
+    "5. Run EVERY test/validation script found in the repo. Read the ENTIRE output — every single line.",
+    "   ```bash",
+    "   # Run all validation scripts",
+    "   for f in $(find . -maxdepth 2 -name 'test_*' -o -name '*_test.*' -o -name '*.test.*' -o -name 'verify*' -o -name 'check*' -o -name 'validate*' -o -name 'grade*' -o -name 'score*' 2>/dev/null); do echo \"=== Running $f ===\"; chmod +x \"$f\" 2>/dev/null; bash \"$f\" 2>&1; echo \"Exit: $?\"; done",
+    "   # Also run standard test commands if applicable",
+    "   make test 2>&1 || npm test 2>&1 || cargo test 2>&1 || go test ./... 2>&1 || python3 -m pytest 2>&1 || true",
+    "   ```",
+    "6. If ANY test shows a failure, STOP. Fix the failure. Then re-run from step 5.",
+    "7. When all tests pass, verify ONE MORE TIME from a clean subshell:",
+    "   `cd $(git rev-parse --show-toplevel) && bash -c '<test_command>'`",
+    "8. Final commit: `cd $(git rev-parse --show-toplevel) && git add -A && git commit -m 'final'`",
+    "9. ONLY NOW may you exit. If tests still fail and you have time remaining, keep working.",
     ...timeLines,
   ].join("\n");
 }
@@ -494,20 +534,645 @@ ${task}
 
 CONTEXT: You are in a git worktree branched from ${base}. All changes are isolated. Agent: ${agent}.
 
-DO THIS:
-1. Read and understand the COMPLETE task. Read ALL existing source files and test files in the repo. Run \`pwd\` to know your working directory.
-2. Analyze: What domain knowledge applies? What are the pitfalls? Pick the simplest reliable approach. What does the verifier actually check?
-3. Write a correct solution. Prefer simple, direct, well-tested approaches over clever ones. Verify files exist after writing: \`ls -la /path/to/file\`.
-4. \`cd $(git rev-parse --show-toplevel) && git add -A && git commit -m 'solution'\` — BEFORE testing.
-5. Test thoroughly. Run every validation command mentioned in the task. Read ALL output — every line.
-6. Fix issues. \`cd $(git rev-parse --show-toplevel) && git add -A && git commit -m 'fix: ...'\` after each fix.
-7. Verify again. Keep iterating until correct or time runs out.
+DO THIS (follow this exact sequence):
+0. SURVEY: Run \`pwd\`. Read CLAUDE.md FIRST — it contains the task description, test scripts, source files, environment info, and pre-flight test output. This saves you multiple turns of exploration. Then survey the repo: \`find . -maxdepth 3 -type f -not -path './.git/*' | head -80\`. If CLAUDE.md was missing or empty, read the task file and all test scripts manually.
+1. PLAN: State your approach in 2-3 sentences BEFORE coding. What will you build? What does the test check? What pitfalls apply? What exact output format is expected?
+2. CODE: Write the simplest correct solution. Verify files exist after writing: \`ls -la /path/to/file && head -5 /path/to/file\`.
+3. COMMIT: \`cd $(git rev-parse --show-toplevel) && git add -A && git commit -m 'solution'\` — BEFORE testing.
+4. TEST: Run every validation command. Read ALL output — every line. Compare actual vs expected byte-by-byte.
+5. FIX: Read the FULL error. Fix root cause. \`cd $(git rev-parse --show-toplevel) && git add -A && git commit -m 'fix: ...'\`.
+6. VERIFY: Re-run tests. If still failing after 3 edits to the same file, try a completely different approach.
+7. FINALIZE: Run the MANDATORY Pre-Completion Checklist from the system prompt. Do NOT exit until you've completed every item.
 
 CRITICAL: The automated verifier checks EXACT outputs — filenames, paths, formats, whitespace, newlines, return codes.
 If stuck on the same error for 60+ seconds, try a completely different approach (different algorithm, language, or library).
 If you've edited a file 3+ times and it still fails, you are likely misunderstanding the problem — re-read the task from scratch and read the test/validation script source if available.
 Check your working directory (\`pwd\`) before writing files — ensure they end up at the paths the task specifies.
+Do NOT exit until you have run ALL tests and they ALL pass, or you have used your entire time budget.
 End with: cd $(git rev-parse --show-toplevel) && git add -A && git commit -m 'final'`;
+}
+
+/**
+ * Generate a compact directory tree listing for the worktree.
+ * This saves the agent 1-2 turns of `find` or `ls` exploration.
+ */
+function generateDirectoryTree(dir: string): string | null {
+  const lines: string[] = [];
+  const maxLines = 120;
+  const skipDirs = new Set([
+    ".git", "node_modules", "__pycache__", ".venv", "venv",
+    ".mypy_cache", ".pytest_cache", ".tox", ".eggs",
+    "target", "build", "dist", ".next", ".nuxt",
+    ".cache", ".DS_Store", "vendor",
+  ]);
+
+  function walk(current: string, prefix: string, depth: number) {
+    if (depth > 4 || lines.length >= maxLines) return;
+    try {
+      const entries = readdirSync(current, { withFileTypes: true })
+        .filter((e) => !skipDirs.has(e.name) && !e.name.startsWith(".git"))
+        .sort((a, b) => {
+          // Directories first, then files
+          if (a.isDirectory() && !b.isDirectory()) return -1;
+          if (!a.isDirectory() && b.isDirectory()) return 1;
+          return a.name.localeCompare(b.name);
+        });
+
+      for (let i = 0; i < entries.length && lines.length < maxLines; i++) {
+        const entry = entries[i];
+        const isLast = i === entries.length - 1;
+        const connector = isLast ? "└── " : "├── ";
+        const fullPath = join(current, entry.name);
+
+        if (entry.isDirectory()) {
+          lines.push(`${prefix}${connector}${entry.name}/`);
+          const nextPrefix = prefix + (isLast ? "    " : "│   ");
+          walk(fullPath, nextPrefix, depth + 1);
+        } else {
+          // Show file size for context
+          try {
+            const stat = statSync(fullPath);
+            const sizeStr = stat.size < 1024
+              ? `${stat.size}B`
+              : stat.size < 1024 * 1024
+                ? `${(stat.size / 1024).toFixed(0)}K`
+                : `${(stat.size / (1024 * 1024)).toFixed(1)}M`;
+            lines.push(`${prefix}${connector}${entry.name} (${sizeStr})`);
+          } catch {
+            lines.push(`${prefix}${connector}${entry.name}`);
+          }
+        }
+      }
+    } catch {
+      // Permission errors, etc.
+    }
+  }
+
+  walk(dir, "", 0);
+  if (lines.length >= maxLines) {
+    lines.push(`... (truncated at ${maxLines} entries)`);
+  }
+  return lines.length > 0 ? lines.join("\n") : null;
+}
+
+/**
+ * Bootstrap a CLAUDE.md file in the worktree for benchmark mode.
+ * Scans the repo for test/validation scripts and includes their contents,
+ * detects the project type for domain-specific hints, and provides
+ * environment context so the agent starts with maximum information.
+ */
+function bootstrapClaudeMd(worktreeDir: string): void {
+  const claudeMdPath = join(worktreeDir, "CLAUDE.md");
+  const existingContent = existsSync(claudeMdPath)
+    ? readFileSync(claudeMdPath, "utf-8")
+    : null;
+
+  // Track whether we found any useful content beyond the header
+  let hasContent = false;
+
+  const sections: string[] = [];
+  // If a CLAUDE.md already exists (task-provided), preserve it and append our context
+  if (existingContent) {
+    sections.push(existingContent);
+    sections.push("");
+    sections.push("---");
+    sections.push("");
+  }
+  sections.push("# Environment Context (auto-generated by gitgang)");
+  sections.push("");
+  sections.push("## Ground Rules");
+  sections.push("- The test/validation scripts below are GROUND TRUTH. Their assertions define correct behavior.");
+  sections.push("- Read them carefully BEFORE writing any code.");
+  sections.push("- When task description is ambiguous, the test script wins.");
+  sections.push("- Track your working directory with `pwd`. Write files to the exact paths tests expect.");
+  sections.push("- Commit EARLY. An imperfect committed solution scores points; an uncommitted perfect solution scores ZERO.");
+  sections.push("- BEFORE finishing: run ALL test/validation scripts and read EVERY line of output. If ANY test fails, fix it.");
+  sections.push("- Do NOT exit until tests pass or you have exhausted your time budget.");
+  sections.push("");
+
+  // Inject task file content so the agent doesn't waste a turn finding/reading it
+  const taskFileContent = readTaskFile(worktreeDir);
+  if (taskFileContent) {
+    hasContent = true;
+    sections.push("## Task Description (pre-loaded)");
+    sections.push("The following is the full task description from the task file:");
+    sections.push("```");
+    sections.push(taskFileContent.content.slice(0, 16000));
+    if (taskFileContent.content.length > 16000) {
+      sections.push(`\n... (${taskFileContent.content.length - 16000} more chars — read ${taskFileContent.filename} for full content)`);
+    }
+    sections.push("```");
+    sections.push("");
+  }
+
+  // Include directory tree so the agent sees the full structure upfront
+  const dirTree = generateDirectoryTree(worktreeDir);
+  if (dirTree) {
+    hasContent = true;
+    sections.push("## Directory Structure (pre-scanned)");
+    sections.push("```");
+    sections.push(dirTree);
+    sections.push("```");
+    sections.push("");
+  }
+
+  // Run environment discovery and inject results so the agent knows what tools are available
+  const envContext = discoverEnvironment(worktreeDir);
+  if (envContext) {
+    hasContent = true;
+    sections.push("## Environment Discovery (pre-scanned)");
+    sections.push("Available tools and versions in this environment:");
+    sections.push("```");
+    sections.push(envContext);
+    sections.push("```");
+    sections.push("");
+  }
+
+  // Detect project type and add domain-specific hints
+  const hints = detectProjectHints(worktreeDir);
+  if (hints.length > 0) {
+    hasContent = true;
+    sections.push("## Project-Specific Notes");
+    for (const hint of hints) {
+      sections.push(`- ${hint}`);
+    }
+    sections.push("");
+  }
+
+  // Find and include test/validation scripts
+  const testPatterns = [
+    "test_", "_test.", ".test.", "verify", "check", "validate",
+    "grade", "score", "run_test", "run_check",
+    "run.sh", "setup.sh", "init.sh", "solve", "judge", "eval",
+    "benchmark", "assert", "expect",
+  ];
+  const testFiles = findTestScripts(worktreeDir, testPatterns);
+
+  if (testFiles.length > 0) {
+    hasContent = true;
+    sections.push("## Test/Validation Scripts (GROUND TRUTH)");
+    sections.push("");
+    for (const tf of testFiles) {
+      try {
+        const content = readFileSync(tf.path, "utf-8");
+        const lines = content.split("\n");
+        const preview = lines.slice(0, 250).join("\n");
+        const truncated = lines.length > 250 ? `\n... (${lines.length - 250} more lines)` : "";
+        sections.push(`### ${tf.relative}`);
+        sections.push("```");
+        sections.push(preview + truncated);
+        sections.push("```");
+        sections.push("");
+      } catch {
+        // Skip unreadable files
+      }
+    }
+  }
+
+  // Include Makefile test targets if present
+  const makefilePath = join(worktreeDir, "Makefile");
+  if (!existsSync(makefilePath)) {
+    const altMakefile = join(worktreeDir, "makefile");
+    if (existsSync(altMakefile)) {
+      try {
+        const content = readFileSync(altMakefile, "utf-8");
+        const testTargets = extractMakefileTestTargets(content);
+        if (testTargets) {
+          hasContent = true;
+          sections.push("## Makefile Test Targets");
+          sections.push("```make");
+          sections.push(testTargets);
+          sections.push("```");
+          sections.push("");
+        }
+      } catch { /* skip */ }
+    }
+  } else {
+    try {
+      const content = readFileSync(makefilePath, "utf-8");
+      const testTargets = extractMakefileTestTargets(content);
+      if (testTargets) {
+        hasContent = true;
+        sections.push("## Makefile Test Targets");
+        sections.push("```make");
+        sections.push(testTargets);
+        sections.push("```");
+        sections.push("");
+      }
+    } catch { /* skip */ }
+  }
+
+  // Include key source files (non-test) so agent doesn't waste turns reading them
+  const sourceFiles = findSourceFiles(worktreeDir);
+  if (sourceFiles.length > 0) {
+    hasContent = true;
+    sections.push("## Key Source Files");
+    sections.push("");
+    for (const sf of sourceFiles) {
+      try {
+        const content = readFileSync(sf.path, "utf-8");
+        const lines = content.split("\n");
+        const preview = lines.slice(0, 200).join("\n");
+        const truncated = lines.length > 200 ? `\n... (${lines.length - 200} more lines)` : "";
+        sections.push(`### ${sf.relative}`);
+        sections.push("```");
+        sections.push(preview + truncated);
+        sections.push("```");
+        sections.push("");
+      } catch {
+        // Skip unreadable files
+      }
+    }
+  }
+
+  // Pre-flight: run test scripts and capture baseline output so the agent
+  // knows exactly what state tests are in BEFORE it starts coding.
+  const preflightOutput = runPreflightTests(worktreeDir, testFiles);
+  if (preflightOutput) {
+    hasContent = true;
+    sections.push("## Pre-flight Test Output (baseline BEFORE any changes)");
+    sections.push("This shows what the tests currently output. Your goal is to make them PASS.");
+    sections.push("```");
+    sections.push(preflightOutput);
+    sections.push("```");
+    sections.push("");
+  }
+
+  if (hasContent || existingContent) {
+    writeFileSync(claudeMdPath, sections.join("\n"));
+  }
+}
+
+function findTestScripts(
+  dir: string,
+  patterns: string[],
+): { path: string; relative: string }[] {
+  const results: { path: string; relative: string }[] = [];
+  const maxFiles = 10; // Cap to avoid huge CLAUDE.md
+
+  function walk(current: string, depth: number) {
+    if (depth > 3 || results.length >= maxFiles) return;
+    try {
+      const entries = readdirSync(current, { withFileTypes: true });
+      for (const entry of entries) {
+        if (results.length >= maxFiles) break;
+        if (entry.name.startsWith(".") || entry.name === "node_modules" ||
+            entry.name === "__pycache__" || entry.name === ".git") continue;
+        const fullPath = join(current, entry.name);
+        if (entry.isDirectory()) {
+          if (["test", "tests", "spec", "specs"].includes(entry.name.toLowerCase())) {
+            walk(fullPath, depth + 1);
+          } else if (depth < 2) {
+            walk(fullPath, depth + 1);
+          }
+        } else if (entry.isFile()) {
+          const lower = entry.name.toLowerCase();
+          const matches = patterns.some((p) => lower.includes(p));
+          if (matches) {
+            const rel = fullPath.slice(dir.length + 1);
+            results.push({ path: fullPath, relative: rel });
+          }
+        }
+      }
+    } catch {
+      // Permission errors, etc.
+    }
+  }
+
+  walk(dir, 0);
+  return results;
+}
+
+/**
+ * Find key source files (non-test) in the worktree to pre-load into CLAUDE.md.
+ * Focuses on small-to-medium files that are likely the main implementation targets.
+ * Skips test files (handled separately), config files, and generated files.
+ */
+function findSourceFiles(
+  dir: string,
+): { path: string; relative: string }[] {
+  const results: { path: string; relative: string }[] = [];
+  const maxFiles = 12; // Cap to avoid bloating CLAUDE.md
+  const maxFileSize = 25_000; // Skip files larger than 25KB (likely not the main target)
+  const skipPatterns = [
+    "test_", "_test.", ".test.", "verify", "check", "validate",
+    "grade", "score", "run_test", "run_check",
+    "package-lock", "yarn.lock", "cargo.lock", "go.sum",
+    ".min.", ".bundle.", ".map",
+  ];
+  const sourceExtensions = new Set([
+    ".py", ".js", ".ts", ".rs", ".go", ".c", ".cpp", ".h", ".hpp",
+    ".java", ".rb", ".sh", ".bash", ".pl", ".lua", ".zig",
+    ".sql", ".r", ".jl", ".ex", ".exs", ".hs", ".ml",
+  ]);
+
+  function walk(current: string, depth: number) {
+    if (depth > 2 || results.length >= maxFiles) return;
+    try {
+      const entries = readdirSync(current, { withFileTypes: true });
+      for (const entry of entries) {
+        if (results.length >= maxFiles) break;
+        if (entry.name.startsWith(".") || entry.name === "node_modules" ||
+            entry.name === "__pycache__" || entry.name === ".git" ||
+            entry.name === "vendor" || entry.name === "target" ||
+            entry.name === "build" || entry.name === "dist") continue;
+        const fullPath = join(current, entry.name);
+        if (entry.isDirectory()) {
+          walk(fullPath, depth + 1);
+        } else if (entry.isFile()) {
+          const lower = entry.name.toLowerCase();
+          // Skip test files, lock files, minified files
+          if (skipPatterns.some((p) => lower.includes(p))) continue;
+          // Check extension
+          const ext = lower.includes(".") ? "." + lower.split(".").pop() : "";
+          if (!sourceExtensions.has(ext)) continue;
+          // Check size
+          try {
+            const stat = statSync(fullPath);
+            if (stat.size > maxFileSize) continue;
+          } catch { continue; }
+          const rel = fullPath.slice(dir.length + 1);
+          results.push({ path: fullPath, relative: rel });
+        }
+      }
+    } catch {
+      // Permission errors, etc.
+    }
+  }
+
+  walk(dir, 0);
+  return results;
+}
+
+/**
+ * Run test/validation scripts before the agent starts to capture baseline output.
+ * This gives the agent concrete knowledge of what tests currently output.
+ * Runs with a short timeout to avoid blocking on long-running tests.
+ */
+function runPreflightTests(
+  worktreeDir: string,
+  testFiles: { path: string; relative: string }[],
+): string | null {
+  // execSync imported at top level from "node:child_process"
+  const outputs: string[] = [];
+  const maxOutputLen = 3000; // Cap total pre-flight output
+  let totalLen = 0;
+
+  // Try common test commands first
+  const commonCommands = [
+    { check: "Makefile", cmd: "make test" },
+    { check: "makefile", cmd: "make test" },
+    { check: "package.json", cmd: "npm test" },
+    { check: "Cargo.toml", cmd: "cargo test" },
+    { check: "go.mod", cmd: "go test ./..." },
+  ];
+
+  for (const { check, cmd } of commonCommands) {
+    if (totalLen >= maxOutputLen) break;
+    if (!existsSync(join(worktreeDir, check))) continue;
+    try {
+      const result = execSync(cmd, {
+        cwd: worktreeDir,
+        timeout: 15_000, // 15s max for pre-flight
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, TERM: "dumb", NO_COLOR: "1" },
+      });
+      const trimmed = result.trim().slice(0, 1000);
+      if (trimmed) {
+        outputs.push(`$ ${cmd}\n${trimmed}`);
+        totalLen += trimmed.length;
+      }
+      break; // Only run one common command
+    } catch (err: any) {
+      // Test failure is expected — capture the output
+      const combined = ((err.stdout || "") + "\n" + (err.stderr || "")).trim().slice(0, 1000);
+      if (combined) {
+        outputs.push(`$ ${cmd} (exit ${err.status || "?"})\n${combined}`);
+        totalLen += combined.length;
+      }
+      break;
+    }
+  }
+
+  // Also try running executable test scripts directly
+  for (const tf of testFiles) {
+    if (totalLen >= maxOutputLen) break;
+    // Only run scripts that are executable or have shebang
+    try {
+      const firstLine = readFileSync(tf.path, "utf-8").split("\n")[0];
+      const isExecutable = firstLine.startsWith("#!");
+      const stat = statSync(tf.path);
+      const hasExecBit = (stat.mode & 0o111) !== 0;
+      if (!isExecutable && !hasExecBit) continue;
+
+      const cmd = hasExecBit ? `./${tf.relative}` : `bash ${tf.relative}`;
+      const result = execSync(cmd, {
+        cwd: worktreeDir,
+        timeout: 10_000,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, TERM: "dumb", NO_COLOR: "1" },
+      });
+      const trimmed = result.trim().slice(0, 500);
+      if (trimmed) {
+        outputs.push(`$ ${cmd}\n${trimmed}`);
+        totalLen += trimmed.length;
+      }
+    } catch (err: any) {
+      const combined = ((err.stdout || "") + "\n" + (err.stderr || "")).trim().slice(0, 500);
+      if (combined) {
+        outputs.push(`$ ${tf.relative} (exit ${err.status || "?"})\n${combined}`);
+        totalLen += combined.length;
+      }
+    }
+  }
+
+  return outputs.length > 0 ? outputs.join("\n\n") : null;
+}
+
+/**
+ * Read the task description file from the worktree.
+ * Checks for common task file names used in benchmarks and projects.
+ * Returns the content and filename, or null if no task file found.
+ */
+function readTaskFile(dir: string): { content: string; filename: string } | null {
+  const candidates = [
+    "TASK.md", "task.md", "TASK.txt", "task.txt",
+    "TASK", "task", "PROBLEM.md", "problem.md",
+    "CHALLENGE.md", "challenge.md",
+    "README.md", "readme.md", "README.txt", "readme.txt",
+    "INSTRUCTIONS.md", "instructions.md",
+    "PROMPT.md", "prompt.md", "PROMPT.txt", "prompt.txt",
+  ];
+  for (const name of candidates) {
+    const p = join(dir, name);
+    if (existsSync(p)) {
+      try {
+        const stat = statSync(p);
+        if (stat.isFile() && stat.size < 50_000) { // Skip if suspiciously large
+          return { content: readFileSync(p, "utf-8"), filename: name };
+        }
+      } catch { /* skip */ }
+    }
+  }
+  return null;
+}
+
+/**
+ * Discover the runtime environment: available tools, language versions,
+ * and system capabilities. This saves the agent 1-2 turns of exploration.
+ * Runs in a short timeout to avoid blocking on slow commands.
+ */
+function discoverEnvironment(dir: string): string | null {
+  const checks: string[] = [];
+  const run = (cmd: string, label: string): void => {
+    try {
+      const result = execSync(cmd, {
+        cwd: dir,
+        timeout: 5000,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, TERM: "dumb", NO_COLOR: "1" },
+      }).trim();
+      if (result) {
+        checks.push(`${label}: ${result.split("\n")[0]}`);
+      }
+    } catch {
+      // Tool not available — skip
+    }
+  };
+
+  run("python3 --version 2>&1", "Python");
+  run("python3 -c \"import sys; print(sys.executable)\" 2>&1", "Python path");
+  run("node --version 2>&1", "Node.js");
+  run("go version 2>&1 | head -1", "Go");
+  run("rustc --version 2>&1", "Rust");
+  run("cargo --version 2>&1", "Cargo");
+  run("gcc --version 2>&1 | head -1", "GCC");
+  run("g++ --version 2>&1 | head -1", "G++");
+  run("java -version 2>&1 | head -1", "Java");
+  run("ruby --version 2>&1", "Ruby");
+  run("which make cmake docker curl wget jq sqlite3 2>/dev/null | xargs -I{} basename {}", "Available tools");
+  run("which nasm gdb valgrind strace ltrace objdump nm readelf strings hexdump xxd 2>/dev/null | xargs -I{} basename {}", "Debug/binary tools");
+  run("which perl php lua R julia 2>/dev/null | xargs -I{} basename {}", "Other languages");
+  run("which tar gzip bzip2 xz zip unzip 2>/dev/null | xargs -I{} basename {}", "Archive tools");
+  run("which sed awk grep find xargs sort uniq wc head tail tee tr cut paste 2>/dev/null | xargs -I{} basename {}", "Text processing");
+  run("which nc ncat socat ss netstat ip ifconfig ping dig nslookup 2>/dev/null | xargs -I{} basename {}", "Network tools");
+  run("uname -s 2>&1", "OS");
+  run("uname -m 2>&1", "Architecture");
+  run("df -h / 2>&1 | tail -1 | awk '{print $4}'", "Free disk");
+  run("free -h 2>/dev/null | head -2 || sysctl -n hw.memsize 2>/dev/null", "Memory");
+  run("nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null", "CPU cores");
+  // Check for common package managers and their installed packages
+  run("pip3 list --format=columns 2>/dev/null | head -20 | tail -18", "Pip packages (sample)");
+  // Check what apt packages are available
+  run("dpkg -l 2>/dev/null | tail -20 | awk '{print $2}' | head -15", "Installed apt packages (sample)");
+
+  return checks.length > 0 ? checks.join("\n") : null;
+}
+
+function extractMakefileTestTargets(content: string): string | null {
+  const lines = content.split("\n");
+  const testLines: string[] = [];
+  let capturing = false;
+  for (const line of lines) {
+    if (/^(test|check|verify|validate|grade)\s*:/.test(line)) {
+      capturing = true;
+      testLines.push(line);
+    } else if (capturing && (line.startsWith("\t") || line.startsWith("  "))) {
+      testLines.push(line);
+    } else {
+      capturing = false;
+    }
+  }
+  return testLines.length > 0 ? testLines.join("\n") : null;
+}
+
+/**
+ * Detect project type from manifest files and return domain-specific hints.
+ * These are general patterns, NOT task-specific hacks.
+ */
+function detectProjectHints(dir: string): string[] {
+  const hints: string[] = [];
+
+  // Rust
+  if (existsSync(join(dir, "Cargo.toml"))) {
+    hints.push("Rust project detected. Use `cargo build` / `cargo test`. Ensure `$HOME/.cargo/bin` is in PATH.");
+    hints.push("Common Rust pitfalls: borrow checker errors, missing `use` imports, `unwrap()` on None/Err.");
+    hints.push("If compilation fails, read the FULL error — Rust errors are verbose but precise.");
+  }
+
+  // Go
+  if (existsSync(join(dir, "go.mod"))) {
+    hints.push("Go project detected. Use `go build ./...` / `go test ./...`. Ensure `$HOME/go/bin` is in PATH.");
+    hints.push("Common Go pitfalls: unused imports (won't compile), error handling, goroutine leaks.");
+    hints.push("Install missing deps: `go mod tidy`.");
+  }
+
+  // Python
+  if (existsSync(join(dir, "requirements.txt")) || existsSync(join(dir, "pyproject.toml")) ||
+      existsSync(join(dir, "setup.py"))) {
+    hints.push("Python project detected. Use `python3` (never bare `python`). Install deps: `pip install -r requirements.txt --break-system-packages`.");
+    hints.push("Common Python pitfalls: indentation, f-string syntax, missing __init__.py, version-specific features.");
+  }
+
+  // Node.js
+  if (existsSync(join(dir, "package.json"))) {
+    hints.push("Node.js project detected. Run `npm install` first. Use `npm test` for testing.");
+    hints.push("Common Node pitfalls: ESM vs CJS (check \"type\" in package.json), missing deps, async/await errors.");
+  }
+
+  // C/C++
+  if (existsSync(join(dir, "CMakeLists.txt")) || existsSync(join(dir, "Makefile")) ||
+      existsSync(join(dir, "makefile"))) {
+    const hasCMake = existsSync(join(dir, "CMakeLists.txt"));
+    if (hasCMake) {
+      hints.push("C/C++ project with CMake. Build: `mkdir -p build && cd build && cmake .. && make`.");
+    }
+    hints.push("Common C/C++ pitfalls: missing headers, linker errors, segfaults, buffer overflows, off-by-one.");
+    hints.push("Install missing libs: `apt-get update -qq && apt-get install -y libXXX-dev`.");
+  }
+
+  // Java
+  if (existsSync(join(dir, "pom.xml")) || existsSync(join(dir, "build.gradle")) ||
+      existsSync(join(dir, "build.gradle.kts"))) {
+    hints.push("Java project detected. Ensure JDK is installed: `java -version`. Use `mvn` or `gradle` as appropriate.");
+    hints.push("Common Java pitfalls: classpath issues, missing imports, null pointer exceptions.");
+  }
+
+  // Docker
+  if (existsSync(join(dir, "Dockerfile")) || existsSync(join(dir, "docker-compose.yml")) ||
+      existsSync(join(dir, "docker-compose.yaml"))) {
+    hints.push("Docker files present. If the task involves containers, use `docker build` / `docker compose up`.");
+    hints.push("Docker gotcha: if `docker` commands fail, try `dockerd &` first, or check if in a nested container.");
+  }
+
+  // Shell scripts (common in terminal-bench)
+  try {
+    const shFiles = readdirSync(dir).filter((f) => f.endsWith(".sh"));
+    if (shFiles.length > 0) {
+      hints.push(`Shell scripts found: ${shFiles.join(", ")}. Make them executable with \`chmod +x *.sh\` before running.`);
+      hints.push("Shell scripting pitfalls: CRLF line endings (use `dos2unix` or `sed -i 's/\\r$//'`), unquoted variables, missing shebangs.");
+    }
+  } catch { /* skip */ }
+
+  // Assembly / low-level
+  try {
+    const asmFiles = readdirSync(dir).filter((f) => /\.(asm|s|S)$/.test(f));
+    if (asmFiles.length > 0) {
+      hints.push("Assembly files present. Use `nasm` for x86 NASM syntax, `as` for GAS syntax.");
+      hints.push("Link with: `ld -o output object.o` or `gcc -nostdlib -o output object.o`.");
+    }
+  } catch { /* skip */ }
+
+  // SQL / Database
+  if (existsSync(join(dir, "schema.sql")) || existsSync(join(dir, "init.sql")) ||
+      existsSync(join(dir, "database.sql"))) {
+    hints.push("SQL files found. Use `sqlite3 db.sqlite < schema.sql` for SQLite or `psql` for PostgreSQL.");
+  }
+
+  return hints;
 }
 
 function reviewerPromptJSON(
@@ -776,6 +1441,12 @@ async function runClaude(
   callbacks: StreamCallbacks = {},
 ): Promise<ProcWrap> {
   const isBenchmark = !!process.env.GITGANG_TIME_BUDGET_SECONDS;
+
+  // In benchmark mode, bootstrap a CLAUDE.md with test scripts and project hints
+  // so the agent starts with maximum context about the environment.
+  if (isBenchmark) {
+    bootstrapClaudeMd(w.dir);
+  }
 
   // Separate system constraints from user task for better instruction adherence.
   // System constraints go via --append-system-prompt (system-level instructions),
@@ -1584,6 +2255,10 @@ class AgentRunner {
   private globalTimeout = false;
   private lastError: string | undefined;
   private idleTimeoutMs = DEFAULT_AGENT_IDLE_TIMEOUT_MS;
+  private earlyExitRetries = 0;
+  private testFailureRetries = 0;
+  private launchTime = 0;
+  private lastOutputTail = "";
 
   constructor(id: AgentId, worktree: Worktree, baseBranch: string, opts: Opts) {
     this.id = id;
@@ -1621,11 +2296,14 @@ class AgentRunner {
   private async launch() {
     try {
       this.lastActivity = Date.now();
+      this.launchTime = Date.now();
       const callbacks: StreamCallbacks = {
         onActivity: () => this.touch(),
         onMessage: (msg, raw) => {
           this.updateSpinnerFromMessage(msg);
           const sanitized = normalizeStreamRaw(raw);
+          // Keep last 2000 chars of output for early-exit retry context
+          this.lastOutputTail = (this.lastOutputTail + sanitized).slice(-2000);
 
           // Track errors vs successful tool use
           if (sanitized.includes("Error executing tool")) {
@@ -1721,17 +2399,230 @@ class AgentRunner {
     }
 
     if (exitCode === 0) {
+      // Early-exit detection: if agent finished before using 40% of its time
+      // budget, it likely misunderstood the task or hit an error it didn't
+      // recognize. Retry with diagnostic context so it can try a different
+      // approach. Only applies in benchmark mode (time budget set).
+      const timeBudget = process.env.GITGANG_TIME_BUDGET_SECONDS
+        ? parseInt(process.env.GITGANG_TIME_BUDGET_SECONDS, 10) * 1000
+        : null;
+      const elapsed = Date.now() - this.launchTime;
+      if (
+        timeBudget &&
+        elapsed < timeBudget * EARLY_EXIT_THRESHOLD &&
+        this.earlyExitRetries < MAX_EARLY_EXIT_RETRIES
+      ) {
+        this.earlyExitRetries++;
+        const remainingBudget = Math.floor((timeBudget - elapsed) / 1000);
+        this.spinner?.warn(
+          `${TAG(this.id)} Finished in ${(elapsed / 1000).toFixed(0)}s (under ${Math.floor(EARLY_EXIT_THRESHOLD * 100)}% of budget). Retrying with context…`,
+        );
+        // Capture git diff from the worktree to show what the previous attempt changed.
+        // This filesystem-level context is far more useful than raw output tail
+        // because it shows the agent's actual work product.
+        let gitDiffContext = "";
+        try {
+          // execSync imported at top level from "node:child_process"
+          const diff = execSync("git diff HEAD --stat && echo '---' && git diff HEAD -- . ':!.logs'", {
+            cwd: this.worktree.dir,
+            timeout: 5000,
+            encoding: "utf-8",
+            stdio: ["pipe", "pipe", "pipe"],
+          }).trim();
+          if (diff) {
+            gitDiffContext = `\nFiles changed by previous attempt:\n${diff.slice(0, 2000)}`;
+          }
+        } catch { /* git not available or no changes */ }
+
+        // Also capture test results if tests exist
+        let testResultContext = "";
+        try {
+          // execSync imported at top level from "node:child_process"
+          // Try running tests to see current state
+          const testResult = execSync(
+            "make test 2>&1 || npm test 2>&1 || cargo test 2>&1 || go test ./... 2>&1 || python3 -m pytest 2>&1 || true",
+            {
+              cwd: this.worktree.dir,
+              timeout: 15_000,
+              encoding: "utf-8",
+              stdio: ["pipe", "pipe", "pipe"],
+              env: { ...process.env, TERM: "dumb", NO_COLOR: "1" },
+            },
+          ).trim();
+          if (testResult) {
+            testResultContext = `\nTest results from previous attempt:\n${testResult.slice(0, 1500)}`;
+          }
+        } catch { /* ignore */ }
+
+        // Append retry context to the task so the agent knows the first attempt
+        // may have been wrong
+        const retryContext = [
+          "",
+          "--- RETRY CONTEXT (previous attempt completed too quickly) ---",
+          "A previous attempt FAILED or was incomplete. It exited in",
+          `${(elapsed / 1000).toFixed(0)} seconds, which is suspiciously fast.`,
+          `Here is what happened: ${this.lastOutputTail || "(no output captured)"}`,
+          gitDiffContext,
+          testResultContext,
+          "",
+          "INSTRUCTIONS FOR RETRY:",
+          "1. Do NOT start from scratch. The previous attempt may have made PARTIAL progress.",
+          "2. Check what files exist and what state the code is in: `git status && git log --oneline -5`",
+          "3. Run the test/validation scripts to see exactly what's failing.",
+          "4. If the previous approach was fundamentally wrong, try a different algorithm/language.",
+          "5. If the previous approach was partially right, fix the specific failures.",
+          "6. Verify your output byte-for-byte against expected output.",
+          `7. You have ${remainingBudget} seconds remaining. Use them wisely.`,
+          "8. COMMIT your work: `cd $(git rev-parse --show-toplevel) && git add -A && git commit -m 'fix'`",
+          "--- END RETRY CONTEXT ---",
+        ].join("\n");
+        this.currentTask = this.currentTask + retryContext;
+        this.lastOutputTail = "";
+        setTimeout(() => void this.launch(), 2000).unref?.();
+        return;
+      }
+
+      // Post-exit test verification: even when the agent exits normally,
+      // run tests to check if they actually pass. If tests fail and we still
+      // have budget remaining, retry with test failure context.
+      // This catches the common case where the agent THINKS it's done but
+      // the solution is actually broken.
+      if (
+        timeBudget &&
+        elapsed < timeBudget * LATE_EXIT_TEST_THRESHOLD &&
+        this.testFailureRetries < MAX_TEST_FAILURE_RETRIES
+      ) {
+        const testFailureOutput = this.runPostExitTestCheck();
+        if (testFailureOutput) {
+          this.testFailureRetries++;
+          const remainingBudget = Math.floor((timeBudget - elapsed) / 1000);
+          this.spinner?.warn(
+            `${TAG(this.id)} Tests FAILING after exit. Retrying with test results (${remainingBudget}s remaining)…`,
+          );
+          const retryContext = [
+            "",
+            "--- RETRY CONTEXT (tests are FAILING after your solution) ---",
+            "You exited thinking the task was complete, but the validation tests are STILL FAILING.",
+            "Test output:",
+            testFailureOutput.slice(0, 3000),
+            "",
+            "CRITICAL INSTRUCTIONS:",
+            "1. Read the test output above carefully — every line.",
+            "2. Identify exactly which tests fail and what they expect vs what you produce.",
+            "3. Compare your actual output to expected output byte-by-byte.",
+            "4. Fix the specific failures. Do NOT rewrite from scratch unless fundamentally wrong.",
+            "5. Re-run ALL tests after each fix.",
+            `6. You have ${remainingBudget} seconds remaining.`,
+            "7. COMMIT: `cd $(git rev-parse --show-toplevel) && git add -A && git commit -m 'fix: test failures'`",
+            "--- END RETRY CONTEXT ---",
+          ].join("\n");
+          this.currentTask = this.currentTask + retryContext;
+          this.lastOutputTail = "";
+          setTimeout(() => void this.launch(), 2000).unref?.();
+          return;
+        }
+      }
+
       this.status = "completed";
-      const msg =
-        this.restarts > 0
-          ? `${TAG(this.id)} Complete after ${this.restarts} restart${this.restarts === 1 ? "" : "s"}`
-          : `${TAG(this.id)} Complete`;
+      const retryInfo = [];
+      if (this.restarts > 0) retryInfo.push(`${this.restarts} restart${this.restarts === 1 ? "" : "s"}`);
+      if (this.earlyExitRetries > 0) retryInfo.push(`${this.earlyExitRetries} early-exit retry`);
+      if (this.testFailureRetries > 0) retryInfo.push(`${this.testFailureRetries} test-fix retry`);
+      const msg = retryInfo.length > 0
+        ? `${TAG(this.id)} Complete after ${retryInfo.join(", ")}`
+        : `${TAG(this.id)} Complete`;
       this.spinner?.succeed(msg);
       this.settle({ status: "success", exitCode, restarts: this.restarts });
       return;
     }
 
     this.handleFailure(`exit code ${exitCode}`, exitCode);
+  }
+
+  /**
+   * Run test/validation scripts in the worktree after the agent exits to check
+   * if the solution actually passes. Returns the test output if tests FAIL,
+   * or null if tests pass (or no test scripts found).
+   * This is a general pattern: verify the agent's work post-hoc.
+   */
+  private runPostExitTestCheck(): string | null {
+    const dir = this.worktree.dir;
+    const outputs: string[] = [];
+
+    // Try finding and running test/validation scripts
+    const testScriptCmd = [
+      "for f in $(find . -maxdepth 2 \\( -name 'test_*' -o -name '*_test.*' -o -name '*.test.*'",
+      "-o -name 'verify*' -o -name 'check*' -o -name 'validate*'",
+      "-o -name 'grade*' -o -name 'score*' \\) -type f 2>/dev/null | head -5); do",
+      "echo \"=== $f ===\"; chmod +x \"$f\" 2>/dev/null; bash \"$f\" 2>&1; echo \"EXIT:$?\"; done",
+    ].join(" ");
+
+    // Also try standard test commands
+    const standardTests = [
+      { check: "Makefile", cmd: "make test 2>&1" },
+      { check: "makefile", cmd: "make test 2>&1" },
+      { check: "package.json", cmd: "npm test 2>&1" },
+      { check: "Cargo.toml", cmd: "cargo test 2>&1" },
+      { check: "go.mod", cmd: "go test ./... 2>&1" },
+    ];
+
+    let ranAnyTest = false;
+    let anyFailure = false;
+
+    // Run validation scripts first
+    try {
+      const result = execSync(testScriptCmd, {
+        cwd: dir,
+        timeout: 30_000,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, TERM: "dumb", NO_COLOR: "1" },
+      });
+      const combined = (result || "").trim();
+      if (combined && combined.includes("EXIT:")) {
+        ranAnyTest = true;
+        outputs.push(combined);
+        // Check for any non-zero exit codes
+        const exitCodes = combined.match(/EXIT:(\d+)/g) || [];
+        for (const ec of exitCodes) {
+          if (ec !== "EXIT:0") anyFailure = true;
+        }
+      }
+    } catch (err: any) {
+      const combined = ((err.stdout || "") + "\n" + (err.stderr || "")).trim();
+      if (combined) {
+        ranAnyTest = true;
+        anyFailure = true;
+        outputs.push(combined);
+      }
+    }
+
+    // Run standard test commands
+    for (const { check, cmd } of standardTests) {
+      if (!existsSync(join(dir, check))) continue;
+      try {
+        const result = execSync(cmd, {
+          cwd: dir,
+          timeout: 30_000,
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          env: { ...process.env, TERM: "dumb", NO_COLOR: "1" },
+        });
+        ranAnyTest = true;
+        outputs.push(`$ ${cmd}\n${(result || "").trim()}`);
+        break; // Only run one standard command
+      } catch (err: any) {
+        ranAnyTest = true;
+        anyFailure = true;
+        const combined = ((err.stdout || "") + "\n" + (err.stderr || "")).trim();
+        outputs.push(`$ ${cmd} (FAILED)\n${combined}`);
+        break;
+      }
+    }
+
+    // If no tests were found or all passed, return null (no retry needed)
+    if (!ranAnyTest || !anyFailure) return null;
+    return outputs.join("\n\n").slice(0, 5000);
   }
 
   private handleFailure(reason: string, exitCode: number) {
@@ -3773,6 +4664,14 @@ export {
   formatMessage,
   generateRunReport,
   writeRunReport,
+  bootstrapClaudeMd,
+  detectProjectHints,
+  findTestScripts,
+  findSourceFiles,
+  runPreflightTests,
+  extractMakefileTestTargets,
+  readTaskFile,
+  discoverEnvironment,
 };
 export { isAgentId };
 export type { AgentId, Opts, ReviewerDecision, AgentRunResult, RunReport, AgentReport, AgentStats, ParsedArgs };
