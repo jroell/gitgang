@@ -43,7 +43,8 @@ GitGang works with these AI CLI tools. Install the ones you plan to use:
 Pair mode is the flagship feature and the **default when you run bare `gg`**. One agent codes while another acts as a real-time reviewer — like having a senior engineer watching over your shoulder, catching mistakes before they compound.
 
 ```bash
-gg "implement JWT authentication middleware"          # pair mode (default)
+gg                                                    # prompts for a task, then pair mode (default)
+gg pair "implement JWT authentication middleware"     # pair mode with inline task
 gg pair --coder claude --reviewer codex "same task"   # explicit pair mode
 ```
 
@@ -220,8 +221,9 @@ gg init  # creates the config file
 {
   "automerge": "ask",
   "reviewer": "codex",
-  "timeoutMs": 1500000,
+  "timeoutMs": 600000,
   "heartbeatIntervalMs": 30000,
+  "timeoutMs": 600000,
   "models": {
     "gemini": "gemini-3.1-pro",
     "claude": "claude-opus-4-7",

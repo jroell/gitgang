@@ -59,13 +59,21 @@ node benchmarks/harness/run.mjs [--filter=<glob>] [--only-hard]
 node benchmarks/harness/score.mjs benchmarks/results/run-<timestamp>.json
 ```
 
-## Harbor / terminal-bench 2.0
+## GitGang benchmark-mode behavior
 
-`benchmarks/harbor/gitgang_harbor_agent.py` runs GitGang in `--solo claude` mode inside a terminal-bench 2.0 environment.
+When the harness sets `GITGANG_TIME_BUDGET_SECONDS` (as the Harbor agent does for terminal-bench), gitgang switches Claude solo runs into a benchmark-tuned path designed to spend less time on setup and catch false finishes before the verifier does.
 
-- Install-time bootstrap now preloads Node 22, Rust, Go, and a common set of Python packages before building GitGang.
-- Before each run, the agent writes a task-first `CLAUDE.md` snapshot with the task text, likely test files, directory listing, and tool availability so Claude starts with the key environment context already on disk.
-- The harness then runs `gitgang --solo claude --yolo --no-pr -- "<instruction>"` and leaves pass/fail to the benchmark verifier rather than GitGang's process exit code.
+- Existing `CLAUDE.md` files are augmented instead of replaced.
+- Gitgang preloads task files (`TASK.md`, `task.md`, etc.), environment discovery, project-specific hints, test and validation scripts, key source files, and a short pre-flight test baseline into `CLAUDE.md`.
+- Claude runs under the supplied time budget and can also be capped with `GITGANG_MAX_TURNS` in custom harnesses.
+- If a run exits very early (currently before 40% of the budget), gitgang retries once with the previous output, `git diff`, and test results attached as retry context.
+- If a run exits with meaningful time still left (currently before 85% of the budget) but the post-exit validation still fails, gitgang retries once with the failing test output attached.
+
+### Custom harness notes
+
+- Set `GITGANG_TIME_BUDGET_SECONDS=<seconds>` to enable the benchmark-tuned prompt and timeout path.
+- Optionally set `GITGANG_MAX_TURNS=<n>` if you want a stricter turn cap than the benchmark default.
+- The packaged terminal-bench hard-subset flow in `benchmarks/run-tbench-hard.sh` and `benchmarks/harbor/gitgang_harbor_agent.py` already wires these knobs for you.
 
 ## Honesty about stump rate
 

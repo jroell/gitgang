@@ -15,7 +15,20 @@
 
 **Note for returning users**: if you typed bare `gg` expecting the interactive REPL (the v1.7.0–v1.9.x default), use `gg -i` from now on.
 
-**Tests**: 555 passing (+4 new assertions covering the new defaults and relaxed pair parsing).
+**Tests**: 553 passing in the current suite.
+
+**Benchmark / terminal-bench hardening**
+
+- The Harbor benchmark agent now bootstraps `CLAUDE.md` with the task text, discovered test/validation scripts, and a compact environment snapshot before starting `gitgang`, so the solo Claude run begins with verifier context already loaded.
+- Early exits in the Harbor benchmark flow now get one automatic retry: if `gitgang --solo claude` exits before using 40% of its time budget, the runner prepends tail output from the failed attempt and asks for a different approach on retry.
+- Benchmark/system constraints now explicitly require byte-for-byte output inspection (`diff`, `xxd`, `repr(...)`) on failures and a final output-format verification pass before finishing.
+- Built-in multi-agent defaults and the `gg init` scaffolded config now use `gemini-3.1-pro`, `claude-opus-4-7`, and `gpt-5.5`.
+
+**Benchmark-mode hardening for terminal-bench 2.0**
+
+- When `GITGANG_TIME_BUDGET_SECONDS` is set, gitgang now augments any existing `CLAUDE.md` with task-file contents, environment discovery, project hints, test and validation scripts, key source files, and pre-flight test output for Claude benchmark runs.
+- Added a benchmark-only early-exit retry path: if Claude exits suspiciously fast, gitgang retries once with the previous output, diff, and test results attached as retry context instead of starting from scratch.
+- Added post-exit validation for benchmark runs: if the agent exits “successfully” while time is still available but the tests still fail, gitgang retries once with the failing test output attached.
 
 ## v1.8.1 — 2026-04-15
 
