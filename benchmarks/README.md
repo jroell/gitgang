@@ -59,21 +59,28 @@ node benchmarks/harness/run.mjs [--filter=<glob>] [--only-hard]
 node benchmarks/harness/score.mjs benchmarks/results/run-<timestamp>.json
 ```
 
-## GitGang benchmark-mode behavior
+## Benchmark-mode bootstrap
 
-When the harness sets `GITGANG_TIME_BUDGET_SECONDS` (as the Harbor agent does for terminal-bench), gitgang switches Claude solo runs into a benchmark-tuned path designed to spend less time on setup and catch false finishes before the verifier does.
+When gitgang is run under the Harbor / terminal-bench flow with a time budget,
+the Claude worker now starts with an auto-generated `CLAUDE.md` in the task
+worktree. The goal is to spend fewer turns on repo discovery and more turns
+solving the task.
 
-- Existing `CLAUDE.md` files are augmented instead of replaced.
-- Gitgang preloads task files (`TASK.md`, `task.md`, etc.), environment discovery, project-specific hints, test and validation scripts, key source files, and a short pre-flight test baseline into `CLAUDE.md`.
-- Claude runs under the supplied time budget and can also be capped with `GITGANG_MAX_TURNS` in custom harnesses.
-- If a run exits very early (currently before 40% of the budget), gitgang retries once with the previous output, `git diff`, and test results attached as retry context.
-- If a run exits with meaningful time still left (currently before 85% of the budget) but the post-exit validation still fails, gitgang retries once with the failing test output attached.
+That bootstrap preloads:
 
-### Custom harness notes
+- the first matching task file (`TASK.md`, `task.txt`, `README.md`,
+  `INSTRUCTIONS.md`, `PROMPT.md`, etc.)
+- a compact directory tree with file sizes
+- discovered tool and runtime information
+- discovered test and validation scripts plus Makefile test targets
+- previews of up to 12 likely source files
+- baseline pre-flight test output when gitgang can safely run something up front
 
-- Set `GITGANG_TIME_BUDGET_SECONDS=<seconds>` to enable the benchmark-tuned prompt and timeout path.
-- Optionally set `GITGANG_MAX_TURNS=<n>` if you want a stricter turn cap than the benchmark default.
-- The packaged terminal-bench hard-subset flow in `benchmarks/run-tbench-hard.sh` and `benchmarks/harbor/gitgang_harbor_agent.py` already wires these knobs for you.
+If the task already ships its own `CLAUDE.md`, gitgang preserves it and appends
+the extra benchmark context. The benchmark-mode prompt also now tells the agent
+to run setup/init scripts when present and includes broader recovery guidance
+for Docker, networking, binary-format, and file-placement failures. Normal
+day-to-day use of `gg` is otherwise unchanged.
 
 ## Honesty about stump rate
 
