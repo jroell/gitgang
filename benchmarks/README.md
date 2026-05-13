@@ -59,43 +59,21 @@ node benchmarks/harness/run.mjs [--filter=<glob>] [--only-hard]
 node benchmarks/harness/score.mjs benchmarks/results/run-<timestamp>.json
 ```
 
-## terminal-bench 2.0 hard subset
+## GitGang benchmark-mode behavior
 
-For the Docker-based `terminal-bench@2.0` hard subset, use the Harbor wrapper:
+When the harness sets `GITGANG_TIME_BUDGET_SECONDS` (as the Harbor agent does for terminal-bench), gitgang switches Claude solo runs into a benchmark-tuned path designed to spend less time on setup and catch false finishes before the verifier does.
 
-```bash
-# Preview the command and selected tasks
-./benchmarks/run-tbench-hard.sh --dry-run
+- Existing `CLAUDE.md` files are augmented instead of replaced.
+- Gitgang preloads task files (`TASK.md`, `task.md`, etc.), environment discovery, project-specific hints, test and validation scripts, key source files, and a short pre-flight test baseline into `CLAUDE.md`.
+- Claude runs under the supplied time budget and can also be capped with `GITGANG_MAX_TURNS` in custom harnesses.
+- If a run exits very early (currently before 40% of the budget), gitgang retries once with the previous output, `git diff`, and test results attached as retry context.
+- If a run exits with meaningful time still left (currently before 85% of the budget) but the post-exit validation still fails, gitgang retries once with the failing test output attached.
 
-# Run the full hard subset
-./benchmarks/run-tbench-hard.sh
+### Custom harness notes
 
-# Iterate on a smaller slice while debugging the harness
-./benchmarks/run-tbench-hard.sh --n-tasks 5
-./benchmarks/run-tbench-hard.sh --task fix-code-vulnerability
-```
-
-Prerequisites:
-
-- `harbor` installed and on your `PATH`
-- Docker running locally
-- `ANTHROPIC_API_KEY` available for Harbor
-
-Useful flags:
-
-- `--model <provider/model>` to override the Harbor model
-- `--n-concurrent <n>` to change parallelism
-- `--task <name>` or `--n-tasks <n>` to narrow the run while iterating
-
-## Benchmark-mode runtime behavior
-
-When the Harbor agent launches `gitgang` with a time budget, `gitgang` now enables a few benchmark-specific behaviors that are useful to know when you are comparing runs or debugging failures:
-
-- It passes a time budget through `GITGANG_TIME_BUDGET_SECONDS` and caps Claude turns with `GITGANG_MAX_TURNS`.
-- In benchmark mode, `gitgang` bootstraps a `CLAUDE.md` file in the worktree with test and validation scripts, project-type hints, key source-file previews, and pre-flight test output.
-- If an agent exits suspiciously early (before 40% of its budget), `gitgang` retries once with extra diagnostic context from the first attempt, including the output tail, `git diff`, and any test results it could capture.
-
-These behaviors are automatic when you run `benchmarks/run-tbench-hard.sh`; you do not need extra CLI flags to opt in.
+- Set `GITGANG_TIME_BUDGET_SECONDS=<seconds>` to enable the benchmark-tuned prompt and timeout path.
+- Optionally set `GITGANG_MAX_TURNS=<n>` if you want a stricter turn cap than the benchmark default.
+- The packaged terminal-bench hard-subset flow in `benchmarks/run-tbench-hard.sh` and `benchmarks/harbor/gitgang_harbor_agent.py` already wires these knobs for you.
 
 ## Honesty about stump rate
 
