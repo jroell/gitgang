@@ -1504,12 +1504,12 @@ describe("findSourceFiles", () => {
     expect(files[0].relative).toBe("small.py");
   });
 
-  test("caps at 8 files", () => {
-    for (let i = 0; i < 12; i++) {
+  test("caps at 12 files", () => {
+    for (let i = 0; i < 16; i++) {
       writeFileSync(join(tmpDir, `file${i}.py`), `x = ${i}`);
     }
     const files = findSourceFiles(tmpDir);
-    expect(files.length).toBe(8);
+    expect(files.length).toBe(12);
   });
 
   test("skips node_modules and .git directories", () => {

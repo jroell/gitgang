@@ -94,7 +94,7 @@ export const DEFAULT_CONFIG_CONTENT = `{
   "automerge": "ask",
   "reviewer": "codex",
   "heartbeatIntervalMs": 30000,
-  "timeoutMs": 600000,
+  "timeoutMs": 1500000,
   "models": {
     "gemini": "gemini-3.1-pro",
     "claude": "claude-opus-4-7",
