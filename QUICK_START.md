@@ -21,11 +21,13 @@ Bare `gg` enters AI pair programming — one agent codes while another reviews i
 
 ```bash
 gg                          # prompts for a task, then pair mode (claude + codex)
-gg "add JWT auth middleware" # pair mode with that task
+gg pair "add JWT auth middleware" # pair mode with that task
 gg pair --coder codex --reviewer claude "refactor auth"  # swap roles
 ```
 
 The coder works normally while the reviewer monitors in parallel. If the reviewer spots a problem, it pauses the coder and the two agents have an autonomous conversation until they agree. When the coder finishes, the reviewer does a final pass and you get a session summary.
+
+Use `gg pair` when you want to pass the task inline. `gg "task"` is the one-shot multi-agent path.
 
 ### Pair Mode Options
 
