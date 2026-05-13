@@ -28,10 +28,10 @@ npm i -g gitgang@latest
 
 GitGang works with these AI CLI tools. Install the ones you plan to use:
 
-| CLI | Default model | Required For |
-|-----|-------|-------------|
+| CLI | Default model in gitgang | Required For |
+|-----|--------------------------|-------------|
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | Claude Opus 4.7 | Pair mode, interactive mode |
-| [Codex CLI](https://github.com/openai/codex) | GPT-5.5 | Pair mode, interactive mode |
+| [Codex CLI](https://github.com/openai/codex) | GPT-5.4 in pair mode, GPT-5.5 elsewhere | Pair mode, interactive mode |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Gemini 3.1 Pro | Interactive mode |
 
 - **Pair mode** requires at least 2 of: `claude`, `codex`
@@ -221,6 +221,7 @@ gg init  # creates the config file
 {
   "automerge": "ask",
   "reviewer": "codex",
+  "timeoutMs": 600000,
   "heartbeatIntervalMs": 30000,
   "timeoutMs": 600000,
   "models": {
