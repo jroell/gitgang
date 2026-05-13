@@ -11,8 +11,7 @@
 - `gg -i` still starts the interactive REPL; `gg "task"` still runs the one-shot multi-agent flow. Scripts that passed a task positionally or used `-i` keep working unchanged.
 - Help text updated: the new Usage block shows pair-as-default, with an explicit "Pair Mode" section listing override flags (`--coder`, `--reviewer`, `--no-yolo`, `--timeout`).
 - `gg --solo <agent> "task"` now skips the reviewer loop entirely, auto-merges the successful agent branch into the generated merge branch, and exits 0 when that merge is clean.
-- Built-in model defaults now use `gemini-3.1-pro`, `claude-opus-4-7`, and `gpt-5.5`; `gg init` scaffolds the same values in `.gitgang/config.json`.
-- The terminal-bench 2.0 Harbor agent now bootstraps task and test context into `CLAUDE.md`, installs a broader toolchain up front, and retries one early exit with failure context before giving up.
+- One-shot and interactive runs now default to `gemini-3.1-pro`, `claude-opus-4-7`, and `gpt-5.5`. Override a single run with `--model-gemini`, `--model-claude`, or `--model-codex`; pair mode continues to use `GITGANG_CLAUDE_MODEL` / `GITGANG_CODEX_MODEL`.
 
 **Note for returning users**: if you typed bare `gg` expecting the interactive REPL (the v1.7.0–v1.9.x default), use `gg -i` from now on.
 

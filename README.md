@@ -28,11 +28,11 @@ npm i -g gitgang@latest
 
 GitGang works with these AI CLI tools. Install the ones you plan to use:
 
-| CLI | Default model in gitgang | Required For |
-|-----|--------------------------|-------------|
-| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | Claude Opus 4.7 | Pair mode, interactive mode |
-| [Codex CLI](https://github.com/openai/codex) | GPT-5.4 in pair mode, GPT-5.5 elsewhere | Pair mode, interactive mode |
-| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Gemini 3.1 Pro | Interactive mode |
+| CLI | Model | Required For |
+|-----|-------|-------------|
+| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | Configurable (default: `claude-opus-4-7`) | Pair mode, interactive mode |
+| [Codex CLI](https://github.com/openai/codex) | Configurable (default: `gpt-5.4` in pair mode, `gpt-5.5` in one-shot/interactive) | Pair mode, interactive mode |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Configurable (default: `gemini-3.1-pro`) | Interactive mode |
 
 - **Pair mode** requires at least 2 of: `claude`, `codex`
 - **Interactive mode** requires all 3: `gemini`, `claude`, `codex`
@@ -234,7 +234,24 @@ gg init  # creates the config file
 
 Priority: CLI flags > env vars > config.json > built-in defaults.
 
-Model overrides via environment variables: `GITGANG_GEMINI_MODEL`, `GITGANG_CLAUDE_MODEL`, `GITGANG_CODEX_MODEL`.
+### Model Selection
+
+One-shot and interactive mode use these built-in defaults:
+
+- Gemini: `gemini-3.1-pro`
+- Claude: `claude-opus-4-7`
+- Codex: `gpt-5.5`
+
+Override them per run with CLI flags:
+
+```bash
+gg --model-claude claude-sonnet-4-6 --model-codex gpt-5.4-mini "audit the auth flow"
+gg -i --model-gemini gemini-2.5-flash "how does session resume work?"
+```
+
+Environment variable overrides work in every mode: `GITGANG_GEMINI_MODEL`, `GITGANG_CLAUDE_MODEL`, `GITGANG_CODEX_MODEL`.
+
+Pair mode does not currently accept `--model-*` flags. It reads `GITGANG_CLAUDE_MODEL` and `GITGANG_CODEX_MODEL` instead, with built-in defaults of `claude-opus-4-7` and `gpt-5.4`.
 
 ## 📋 Requirements
 
