@@ -11,11 +11,19 @@
 - `gg -i` still starts the interactive REPL; `gg "task"` still runs the one-shot multi-agent flow. Scripts that passed a task positionally or used `-i` keep working unchanged.
 - Help text updated: the new Usage block shows pair-as-default, with an explicit "Pair Mode" section listing override flags (`--coder`, `--reviewer`, `--no-yolo`, `--timeout`).
 - `gg --solo <agent> "task"` now skips the reviewer loop entirely, auto-merges the successful agent branch into the generated merge branch, and exits 0 when that merge is clean.
-- The default Claude model is now `claude-opus-4-7` across GitGang flows. Use `GITGANG_CLAUDE_MODEL` or `--model-claude` to override it per environment or per run.
+- Built-in model defaults now use `gemini-3.1-pro`, `claude-opus-4-7`, and `gpt-5.5`; `gg init` scaffolds the same values in `.gitgang/config.json`.
+- The terminal-bench 2.0 Harbor agent now bootstraps task and test context into `CLAUDE.md`, installs a broader toolchain up front, and retries one early exit with failure context before giving up.
 
 **Note for returning users**: if you typed bare `gg` expecting the interactive REPL (the v1.7.0–v1.9.x default), use `gg -i` from now on.
 
-**Tests**: 555 passing (+4 new assertions covering the new defaults and relaxed pair parsing).
+**Tests**: 553 passing in the current suite.
+
+**Benchmark / terminal-bench hardening**
+
+- The Harbor benchmark agent now bootstraps `CLAUDE.md` with the task text, discovered test/validation scripts, and a compact environment snapshot before starting `gitgang`, so the solo Claude run begins with verifier context already loaded.
+- Early exits in the Harbor benchmark flow now get one automatic retry: if `gitgang --solo claude` exits before using 40% of its time budget, the runner prepends tail output from the failed attempt and asks for a different approach on retry.
+- Benchmark/system constraints now explicitly require byte-for-byte output inspection (`diff`, `xxd`, `repr(...)`) on failures and a final output-format verification pass before finishing.
+- Built-in multi-agent defaults and the `gg init` scaffolded config now use `gemini-3.1-pro`, `claude-opus-4-7`, and `gpt-5.5`.
 
 **Benchmark-mode hardening for terminal-bench 2.0**
 
