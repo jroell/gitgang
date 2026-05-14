@@ -221,9 +221,8 @@ gg init  # creates the config file
 {
   "automerge": "ask",
   "reviewer": "codex",
-  "timeoutMs": 600000,
   "heartbeatIntervalMs": 30000,
-  "timeoutMs": 600000,
+  "timeoutMs": 1500000,
   "models": {
     "gemini": "gemini-3.1-pro",
     "claude": "claude-opus-4-7",
