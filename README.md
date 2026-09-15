@@ -69,13 +69,13 @@ gg pair --coder claude --reviewer claude "refactor auth module" --review-interva
 ```
 
 | Flag | Description | Default |
-||------|-------------|---------|
-|| `--coder` | Agent that writes code (`claude` or `codex`) | `claude` |
-|| `--reviewer` | Agent that reviews (`claude` or `codex`) | `codex` |
-|| `--review-interval` | How often the reviewer checks | `45s` |
-|| `--max-interventions` | Max reviewer pause cycles before forcing completion | `5` |
-|| `--timeout` | Total session timeout | `30m` |
-|| `--yolo` / `--no-yolo` | Auto-approve agent actions | `true` |
+|------|-------------|---------|
+| `--coder` | Agent that writes code (`claude` or `codex`) | `claude` |
+| `--reviewer` | Agent that reviews (`claude` or `codex`) | `codex` |
+| `--review-interval` | How often the reviewer checks | `45s` |
+| `--max-interventions` | Max reviewer pause cycles before forcing completion | `5` |
+| `--timeout` | Total session timeout | `30m` |
+| `--yolo` / `--no-yolo` | Auto-approve agent actions | `true` |
 
 ### What You See
 
@@ -219,11 +219,11 @@ gg init  # creates the config file
 
 ```json
 {
+  "_readme": "gitgang per-repo config. Every field is optional. CLI flags and env vars override these. Delete this file to reset to built-in defaults.",
   "automerge": "ask",
   "reviewer": "codex",
-  "timeoutMs": 600000,
   "heartbeatIntervalMs": 30000,
-  "timeoutMs": 600000,
+  "timeoutMs": 1500000,
   "models": {
     "gemini": "gemini-3.1-pro",
     "claude": "claude-opus-4-7",
@@ -278,10 +278,10 @@ npm test  # run test suite
 ## 🎯 Use Cases
 
 | Mode | Best For |
-||------|----------|
-|| `gg` / `gg pair` | Complex features, refactors, unfamiliar codebases — when early feedback prevents wasted work |
-|| `gg -i` | Exploration, Q&A, comparing approaches, interactive code changes |
-|| `gg "task"` | Simple, well-defined tasks — fire and forget |
+|------|----------|
+| `gg` / `gg pair` | Complex features, refactors, unfamiliar codebases — when early feedback prevents wasted work |
+| `gg -i` | Exploration, Q&A, comparing approaches, interactive code changes |
+| `gg "task"` | Simple, well-defined tasks — fire and forget |
 
 ## ⚠️ Important Notes
 
